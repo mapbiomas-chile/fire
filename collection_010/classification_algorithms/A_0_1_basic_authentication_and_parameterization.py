@@ -6,7 +6,7 @@
 # Specify the country for processing. Options: ['bolivia', 'colombia', 'chile', 'peru', 'paraguay', 'guyana']
 country = 'chile'  # Set the country from the available options
 # Define a name for the collection to generate log messages (can be customized for different logs)
-collection_name = 'collection_1'
+collection_name = 'collection1'
 
 # Import and authenticate libraries for Google cloud services
 ee_project = f'mapbiomas-{country}'  # Set the project name based on the selected country
@@ -30,7 +30,7 @@ def authenticates(ee_project,bucketName):
 authenticates(ee_project, bucket_name)
 
 # Define the path to the classification algorithms scripts
-algorithms = f'/content/brazil-fire/network/classification_algorithms'
+algorithms = f'/content/mapbiomas-chile/fire/tree/main/collection_010/classification_algorithms'
 
 exec(open(f'/content/brazil-fire/utils/google_collab_pdf_show.py').read())
 pdf_path = '/content/brazil-fire/network/entrenamiento_de_monitoreo_de_cicatrices_de_fuego_en_regiones_de_la_red_mapBiomas.pdf'
