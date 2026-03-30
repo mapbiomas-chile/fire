@@ -117,7 +117,7 @@ class TrainingInterface:
                     exists = model_ckpt in existing_models
 
                     if exists:
-                        label += '⚠️'
+                        label += ' ⚠️'
 
                     checkbox = widgets.Checkbox(
                         value=False,
@@ -131,7 +131,13 @@ class TrainingInterface:
         self.checkboxes = formatted_checkboxes
         return widgets.VBox(
             formatted_checkboxes,
-            layout=widgets.Layout(border='1px solid black', padding='10px', margin='10px 0')
+            layout=widgets.Layout(
+                border='1px solid black',
+                padding='10px',
+                margin='10px 0',
+                max_height='220px',
+                overflow_y='auto'
+            )
         )
 
     def on_checkbox_click(self, change):
@@ -172,40 +178,63 @@ class TrainingInterface:
         else:
             self.log(f"[WARNING] No matching training samples found for region: {region}")
 
+    def create_scrollable_text_panel(self, title, items, border_color='black', height='150px'):
+        title_widget = widgets.HTML(value=f"<b>{title}</b>")
+        output = widgets.Output(
+            layout=widgets.Layout(
+                border=f'1px solid {border_color}',
+                height=height,
+                overflow_y='auto',
+                margin='5px 0 10px 0',
+                padding='6px'
+            )
+        )
+        with output:
+            if items:
+                for item in items:
+                    print(f" - {item}")
+            else:
+                print("No items found.")
+        return VBox([title_widget, output])
+
     def display_existing_models(self):
         """
         Display a scrollable list of existing models from the GCS bucket.
         """
         fs.invalidate_cache()
         existing = sorted(self.list_existing_models())
-        output = widgets.Output(
-            layout={'border': '1px solid green', 'height': '150px', 'overflow_y': 'scroll', 'margin': '10px 0'}
+        panel = self.create_scrollable_text_panel(
+            title=f"Existing trained models ({len(existing)}):",
+            items=existing,
+            border_color='green',
+            height='150px'
         )
-        display(widgets.HTML(value=f"<b>Existing trained models ({len(existing)}):</b>"))
-        with output:
-            for model in existing:
-                print(f'  - {model}')
-        display(output)
+        display(panel)
 
     def render_interface(self):
         """
         Renders the full interface: title, file list, checkboxes, button.
         """
+        clear_output(wait=True)
+
         self.training_files = self.list_training_samples_folder()
         num_files = len(self.training_files)
 
         header = widgets.HTML(
-            value=f"<b>Selected country: {self.country} ({num_files} files found)</b>"
-                  f"<br><b>Base subfolder:</b> <code>{base_subfolder or '(root)'}</code>"
+            value=(
+                f"<b>Selected country:</b> {self.country} ({num_files} files found)"
+                f"<br><b>Base subfolder:</b> <code>{base_subfolder or '(root)'}</code>"
+            ),
+            layout=widgets.Layout(margin='0 0 10px 0')
         )
         display(header)
 
-        files_panel = widgets.Output(
-            layout={'border': '1px solid black', 'height': '150px', 'overflow_y': 'scroll', 'margin': '10px 0'}
+        files_panel = self.create_scrollable_text_panel(
+            title="Sample files:",
+            items=self.training_files,
+            border_color='black',
+            height='180px'
         )
-        with files_panel:
-            for f in self.training_files:
-                print(f'  - {f}')
         display(files_panel)
 
         if num_files == 0:
@@ -215,7 +244,8 @@ class TrainingInterface:
         self.display_existing_models()
 
         samples_title = widgets.HTML(
-            value="<b>Sample by region, and versions available to run the training:</b>"
+            value="<b>Sample by region, and versions available to run the training:</b>",
+            layout=widgets.Layout(margin='10px 0 5px 0')
         )
         display(samples_title)
 
