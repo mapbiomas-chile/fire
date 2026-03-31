@@ -6,19 +6,33 @@
 # 📦 INSTALL AND IMPORT LIBRARIES
 # ====================================
 
+import os
+import sys
+import re
+import math
+import time
+import json
+import glob
+import subprocess
 import importlib
+from datetime import datetime
+
+import numpy as np
 
 # Função para verificar e instalar bibliotecas
 def install_and_import(package):
     try:
         importlib.import_module(package)
     except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", package],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT
+        )
         clear_console()
 
 # Função para limpar o console
 def clear_console():
-    # Limpa o console de acordo com o sistema operacional
     if os.name == 'nt':  # Windows
         os.system('cls')
     else:  # MacOS/Linux
@@ -28,23 +42,9 @@ def clear_console():
 install_and_import('rasterio')
 install_and_import('gcsfs')
 install_and_import('ipywidgets')
+install_and_import('tqdm')
 
-# Verificar e instalar pacotes Python
-install_and_import('rasterio')
-install_and_import('gcsfs')
-install_and_import('ipywidgets')
-
-import os
-import sys
-import re
-import math
-import time
-import json
-import glob
-import subprocess
-import numpy as np
 import rasterio
-from datetime import datetime
 
 # TensorFlow 1.x modo compatível
 import tensorflow.compat.v1 as tf
@@ -58,28 +58,49 @@ import ipywidgets as widgets
 from IPython.display import display, HTML, clear_output
 
 # ====================================
+# 🌍 SAFE GLOBALS / DEFAULTS
+# ====================================
+
+if 'bucket_name' not in globals():
+    bucket_name = 'mapbiomas-fire'
+
+if 'country' not in globals():
+    country = 'chile'
+
+if 'collection_name' not in globals():
+    collection_name = 'col1'
+
+if 'models_folder' not in globals():
+    models_folder = f'models_{collection_name}'
+
+if 'mosaics_folder' not in globals():
+    mosaics_folder = 'mosaics_cog'
+
+if 'ee_project' not in globals():
+    ee_project = f'mapbiomas-{country}'
+
+if 'fs' not in globals():
+    fs = gcsfs.GCSFileSystem(project=ee_project)
+
+if 'BASE_DATASET_PATH' not in globals():
+    raise RuntimeError("[ERROR] BASE_DATASET_PATH is not defined. Run A_0_1 first.")
+
+# ====================================
 # 🌍 GLOBAL VARIABLES AND DIRECTORY SETUP
 # ====================================
 
 # Definir diretórios para o armazenamento de dados e saída do modelo
+# BASE_DATASET_PATH deve ser algo como:
+# mapbiomas-fire/sudamerica/chile/collection1/b24
 LOCAL_BASE_FOLDER = f"/content/{BASE_DATASET_PATH}"
 
 folder_samples = f'{LOCAL_BASE_FOLDER}/training_samples'
-folder_model   = f'{LOCAL_BASE_FOLDER}/models_col1'
+folder_model   = f'{LOCAL_BASE_FOLDER}/{models_folder}'
 folder_images  = f'{LOCAL_BASE_FOLDER}/tmp1'
-folder_mosaic  = f'{LOCAL_BASE_FOLDER}/mosaics_cog'
+folder_mosaic  = f'{LOCAL_BASE_FOLDER}/{mosaics_folder}'
 
-if not os.path.exists(folder_samples):
-    os.makedirs(folder_samples)
-
-if not os.path.exists(folder_model):
-    os.makedirs(folder_model)
-
-if not os.path.exists(folder_images):
-    os.makedirs(folder_images)
-
-if not os.path.exists(folder_mosaic):
-    os.makedirs(folder_mosaic)
+for folder in [folder_samples, folder_model, folder_images, folder_mosaic]:
+    os.makedirs(folder, exist_ok=True)
 
 # ====================================
 # 🧠 CORE CLASSES (ModelTrainer, ImageProcessor, FileManager)
@@ -90,20 +111,39 @@ class ModelTrainer:
         self.bucket_name = bucket_name
         self.country = country
         self.folder_model = folder_model
-        self.get_active_checkbox = get_active_checkbox_func  # função global já existente
+        self.get_active_checkbox = get_active_checkbox_func
 
     def split_and_train(self, valid_data_train_test, bi, li):
         TRAIN_FRACTION = 0.7
+
+        if valid_data_train_test is None or valid_data_train_test.shape[0] == 0:
+            log_message("[ERROR] Empty training dataset. Training aborted.")
+            return
+
         training_size = int(valid_data_train_test.shape[0] * TRAIN_FRACTION)
+
+        # Garantiza al menos 1 muestra de entrenamiento y 1 de validación cuando sea posible
+        if valid_data_train_test.shape[0] < 2:
+            log_message("[ERROR] Need at least 2 valid samples to split train/validation.")
+            return
+
+        training_size = max(1, min(training_size, valid_data_train_test.shape[0] - 1))
 
         training_data = valid_data_train_test[:training_size, :]
         validation_data = valid_data_train_test[training_size:, :]
+
+        if training_data.shape[0] == 0 or validation_data.shape[0] == 0:
+            log_message("[ERROR] Training or validation split is empty. Training aborted.")
+            return
 
         log_message(f"[INFO] Training set size: {training_data.shape[0]}")
         log_message(f"[INFO] Validation set size: {validation_data.shape[0]}")
 
         data_mean = training_data[:, bi].mean(axis=0)
         data_std = training_data[:, bi].std(axis=0)
+
+        # Evitar divisiones por cero
+        data_std = np.where(data_std == 0, 1e-6, data_std)
 
         log_message(f"[INFO] Mean of training bands: {data_mean}")
         log_message(f"[INFO] Standard deviation of training bands: {data_std}")
@@ -114,8 +154,12 @@ class ModelTrainer:
         import tensorflow.compat.v1 as tf
         tf.disable_v2_behavior()
 
+        if training_size <= 0:
+            log_message("[ERROR] training_size is 0. Training aborted.")
+            return
+
         lr = 0.001
-        BATCH_SIZE = 1000
+        BATCH_SIZE = min(1000, training_size)
         N_ITER = 7000
         NUM_INPUT = len(bi)
         NUM_CLASSES = 2
@@ -128,7 +172,7 @@ class ModelTrainer:
 
         graph = tf.Graph()
         with graph.as_default():
-            log_message(f"[INFO] Setting up the TensorFlow graph...")
+            log_message("[INFO] Setting up the TensorFlow graph...")
 
             x_input = tf.placeholder(tf.float32, shape=[None, NUM_INPUT], name='x_input')
             y_input = tf.placeholder(tf.int64, shape=[None], name='y_input')
@@ -156,25 +200,34 @@ class ModelTrainer:
         gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
         start_time = time.time()
 
-        checkbox_label = self.get_active_checkbox().replace('⚠️', '').replace('✅', '').strip()
+        checkbox_label = self.get_active_checkbox()
+        if not checkbox_label:
+            log_message("[ERROR] No active checkbox selected.")
+            return
+
+        checkbox_label = checkbox_label.replace('⚠️', '').replace('✅', '').strip()
         split_name = checkbox_label.split('_')
-        
+
         if len(split_name) < 3:
             log_message(f"[ERROR] Unexpected checkbox format: {checkbox_label}")
             return
-        
+
         version = split_name[1]  # v1
-        region = split_name[2]   # r01
-        
-        model_path = f'{self.folder_model}/col1_{self.country}_{version}_{region}_rnn_lstm_ckpt'
+        region = split_name[2]   # r01 / r2 / r4
+
+        model_path = f'{self.folder_model}/{collection_name}_{self.country}_{version}_{region}_rnn_lstm_ckpt'
         json_path = f'{model_path}_hyperparameters.json'
 
         with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
             sess.run(init)
-            validation_dict = {x_input: validation_data[:, bi], y_input: validation_data[:, li]}
+            validation_dict = {
+                x_input: validation_data[:, bi],
+                y_input: validation_data[:, li]
+            }
 
             for i in range(N_ITER + 1):
-                batch = training_data[np.random.choice(training_size, BATCH_SIZE, False), :]
+                batch_idx = np.random.choice(training_size, BATCH_SIZE, replace=False)
+                batch = training_data[batch_idx, :]
                 feed_dict = {x_input: batch[:, bi], y_input: batch[:, li]}
                 sess.run(optimizer, feed_dict=feed_dict)
 
@@ -201,16 +254,17 @@ class ModelTrainer:
                 }
             }
 
-
-
-
             with open(json_path, 'w') as json_file:
                 json.dump(hyperparameters, json_file)
+
             log_message(f'[INFO] Hyperparameters saved to: {json_path}')
 
-            bucket_model_path = f'gs://{BASE_DATASET_PATH}/models_col1/'
+            bucket_model_path = f'gs://{BASE_DATASET_PATH}/{models_folder}/'
             try:
-                subprocess.check_call(f'gsutil cp {model_path}.* {json_path} {bucket_model_path}', shell=True)
+                subprocess.check_call(
+                    f'gsutil cp "{model_path}".* "{json_path}" "{bucket_model_path}"',
+                    shell=True
+                )
                 log_message(f'[INFO] Model uploaded to GCS at: {bucket_model_path}')
                 time.sleep(2)
                 fs.invalidate_cache()
@@ -220,6 +274,7 @@ class ModelTrainer:
             duration = time.time() - start_time
             log_message(f"[INFO] Training completed in: {time.strftime('%H:%M:%S', time.gmtime(duration))}")
             log_message(f"[INFO] Final model saved at: {model_path}")
+
 
 class ImageProcessor:
     def __init__(self, folder_samples, fs, log_func):
@@ -235,8 +290,8 @@ class ImageProcessor:
             raise FileNotFoundError(f"Erro ao carregar imagem {image_path}: {str(e)}")
 
     def convert_to_array(self, dataset):
-        data = dataset.read()  # Formato: (bands, height, width)
-        data = np.transpose(data, (1, 2, 0))  # Para (height, width, bands)
+        data = dataset.read()  # (bands, height, width)
+        data = np.transpose(data, (1, 2, 0))  # (height, width, bands)
         return data
 
     def process_image(self, image_path):
@@ -245,9 +300,10 @@ class ImageProcessor:
             dataset = self.load_image(image_path)
             data = self.convert_to_array(dataset)
             vector = data.reshape(data.shape[0] * data.shape[1], data.shape[2])
+
             # Mantém pixel se PELO MENOS uma banda for válida
             cleaned = vector[~np.isnan(vector).all(axis=1)]
-            
+
             if cleaned.shape[0] == 0:
                 self.log_message(
                     f"[WARNING] Image {image_path} resulted in 0 valid pixels "
@@ -257,11 +313,12 @@ class ImageProcessor:
                 self.log_message(
                     f"[INFO] Image {image_path}: {cleaned.shape[0]}/{vector.shape[0]} valid pixels"
                 )
-            
+
             return cleaned
         except Exception as e:
             self.log_message(f"[ERROR] Falha ao processar a imagem {image_path}: {str(e)}")
             return None
+
 
 class FileManager:
     def __init__(self, bucket_name, country, folder_samples, fs, log_func):
@@ -273,7 +330,10 @@ class FileManager:
 
     def download_image(self, image):
         self.log_message(f"[INFO] Starting download of: {image}")
-        download_command = f'gsutil -m cp gs://{BASE_DATASET_PATH}/training_samples/{image} {self.folder_samples}/'
+        download_command = (
+            f'gsutil -m cp "gs://{BASE_DATASET_PATH}/training_samples/{image}" '
+            f'"{self.folder_samples}/"'
+        )
 
         process = subprocess.Popen(download_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         process.wait()
@@ -293,11 +353,14 @@ class FileManager:
             initial_size = os.path.getsize(file_path)
         except FileNotFoundError:
             initial_size = 0
+
         time.sleep(1)
+
         try:
             current_size = os.path.getsize(file_path)
         except FileNotFoundError:
             current_size = 0
+
         return current_size - initial_size
 
 
@@ -330,13 +393,8 @@ def infer_dataset_schema(sample_path, label_name="landcover"):
 
     label_band_index = band_names.index(label_name)
 
-    input_band_indices = [
-        i for i in range(band_count) if i != label_band_index
-    ]
-
-    input_band_names = [
-        band_names[i] for i in input_band_indices
-    ]
+    input_band_indices = [i for i in range(band_count) if i != label_band_index]
+    input_band_names = [band_names[i] for i in input_band_indices]
 
     return {
         "NUM_INPUT": len(input_band_indices),
@@ -346,16 +404,17 @@ def infer_dataset_schema(sample_path, label_name="landcover"):
         "ALL_BAND_NAMES": band_names
     }
 
-# Função otimizada para remover NaNs e embaralhar os dados
-def filter_valid_data_and_shuffle(data):
-    """Remove rows with NaN and shuffles the data, optimized."""
-    # Remove NaNs de forma vetorizada, sem loops
-    mask = np.all(~np.isnan(data), axis=1)  # Cria uma máscara que identifica as linhas válidas
-    valid_data = data[mask]  # Aplica a máscara para filtrar as linhas válidas
 
-    # Embaralha os dados de forma eficiente
-    np.random.default_rng().shuffle(valid_data)  # Usando Generator mais rápido para embaralhamento
+def filter_valid_data_and_shuffle(data):
+    """Remove rows with NaN and shuffles the data."""
+    mask = np.all(~np.isnan(data), axis=1)
+    valid_data = data[mask]
+
+    if valid_data.shape[0] > 0:
+        np.random.default_rng().shuffle(valid_data)
+
     return valid_data
+
 
 def fully_connected_layer(input, n_neurons, activation=None):
     """
@@ -366,96 +425,93 @@ def fully_connected_layer(input, n_neurons, activation=None):
     :param activation: Activation function ('relu' or None)
     :return: Layer output with or without activation applied
     """
-    input_size = input.get_shape().as_list()[1]  # Get input size (number of features)
+    input_size = input.get_shape().as_list()[1]
 
-    # Initialize weights (W) with a truncated normal distribution and initialize biases (b) with zeros
-    W = tf.Variable(tf.truncated_normal([input_size, n_neurons], stddev=1.0 / math.sqrt(float(input_size))), name='W')
+    W = tf.Variable(
+        tf.truncated_normal([input_size, n_neurons], stddev=1.0 / math.sqrt(float(input_size))),
+        name='W'
+    )
     b = tf.Variable(tf.zeros([n_neurons]), name='b')
 
-    # Apply the linear transformation (Wx + b)
     layer = tf.matmul(input, W) + b
 
-    # Apply activation function, if specified
     if activation == 'relu':
         layer = tf.nn.relu(layer)
 
     return layer
-    
+
+
 # ====================================
 # 🚀 MAIN EXECUTION LOGIC
 # ====================================
-# Includes: sample_download_and_preparation()
 
-# Main function for handling image downloads and processing
 def sample_download_and_preparation(images_train_test):
+    if not images_train_test:
+        log_message("[ERROR] Empty image list received.")
+        return
+
     image_processor = ImageProcessor(folder_samples, fs, log_message)
     file_manager = FileManager(bucket_name, country, folder_samples, fs, log_message)
     all_data_train_test_vector = []
 
     log_message(f"[INFO] Starting image download and preparation for {len(images_train_test)} images...")
 
-    # 🔍 Infer dataset schema from the first sample (once)
+    # 🔍 Infer dataset schema from the first sample
     first_sample_name = images_train_test[0]
     first_sample_path = os.path.join(folder_samples, first_sample_name)
-    
-    # Garante que o primeiro sample exista localmente
+
     if not os.path.exists(first_sample_path):
-        success = FileManager(bucket_name, country, folder_samples, fs, log_message).download_image(first_sample_name)
+        success = file_manager.download_image(first_sample_name)
         if not success:
             raise RuntimeError("[ERROR] Failed to download first sample for schema inference.")
-    
-    dataset_schema = infer_dataset_schema(
-        first_sample_path,
-        label_name="landcover"
-    )
-    
+
+    dataset_schema = infer_dataset_schema(first_sample_path, label_name="landcover")
     log_message(f"[INFO] Inferred dataset schema: {dataset_schema}")
-    
+
     with tqdm(total=len(images_train_test), desc="[INFO] Downloading and processing images") as pbar:
         for image in images_train_test:
             local_file = os.path.join(folder_samples, image)
 
             if os.path.exists(local_file):
                 log_message(f"[INFO] The file {image} already exists. Skipping download, but processing it.")
-                images_name = [local_file]
             else:
                 success = file_manager.download_image(image)
                 if not success:
+                    pbar.update(1)
                     continue
-                images_name = [local_file]
 
-            for img in images_name:
-                processed_data = image_processor.process_image(img)
-                if processed_data is not None:
-                    all_data_train_test_vector.append(processed_data)
+            processed_data = image_processor.process_image(local_file)
+            if processed_data is not None:
+                all_data_train_test_vector.append(processed_data)
 
             pbar.update(1)
 
     if not all_data_train_test_vector:
         raise ValueError("[ERROR] No training or test data available for concatenation.")
-    
+
     data_train_test_vector = np.concatenate(all_data_train_test_vector)
     log_message(f"[INFO] Concatenated data: {data_train_test_vector.shape}")
-    
+
     valid_data_train_test = filter_valid_data_and_shuffle(data_train_test_vector)
     if valid_data_train_test.shape[0] == 0:
-      log_message("[ERROR] No valid training samples after filtering. Training aborted.")
-      log_message("[ERROR] Check sample generation and band masks.")
-      return
-    log_message(f"[INFO] Valid data after filtering: {valid_data_train_test.shape}")
-    
-    trainer = ModelTrainer(bucket_name, country, folder_model, interface.get_active_checkbox)
+        log_message("[ERROR] No valid training samples after filtering. Training aborted.")
+        log_message("[ERROR] Check sample generation and band masks.")
+        return
 
+    log_message(f"[INFO] Valid data after filtering: {valid_data_train_test.shape}")
+
+    trainer = ModelTrainer(bucket_name, country, folder_model, interface.get_active_checkbox)
     trainer.split_and_train(
         valid_data_train_test,
         bi=dataset_schema["INPUT_BAND_INDICES"],
         li=dataset_schema["LABEL_BAND_INDEX"]
     )
 
+
 # ====================================
 # 🚀 RUNNING THE INTERFACE
 # ====================================
-# Cria a interface e guarda em uma variável global
+
 interface = TrainingInterface(
     country=country,
     preparation_function=sample_download_and_preparation,
