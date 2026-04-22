@@ -19,7 +19,7 @@ cd "$MINICONDA_PATH"
 source ./etc/profile.d/conda.sh
 conda activate "$CONDA_ENV_PATH"
 
-python /home/ecastillo/mapbiomas/fire/refactoring/classification_algorithms/train_fire_model.py \
+python /home/ecastillo/mapbiomas/fire/classification/train_fire_model.py \
   --country chile \
   --version v1 \
   --region r2 \

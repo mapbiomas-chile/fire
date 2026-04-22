@@ -1,6 +1,6 @@
 #!/bin/bash
 
-python /home/ecastillo/mapbiomas/fire/refactoring/train_fire_model.py \
+python /home/ecastillo/mapbiomas/fire/classification/train_fire_model.py \
   --country chile \
   --version v1 \
   --region r3 \

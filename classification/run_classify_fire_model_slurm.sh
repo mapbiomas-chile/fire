@@ -30,7 +30,7 @@ MOSAIC_NAME="${2}"
 MODEL_PATH="/home/ecastillo/mapbiomas/models/${MODEL_NAME}"
 MOSAIC_PATH="/home/ecastillo/mapbiomas/mosaics_cog/${MOSAIC_NAME}"
 
-python /home/ecastillo/mapbiomas/fire/refactoring/classify_fire_model.py \
+python /home/ecastillo/mapbiomas/fire/classification/classify_fire_model.py \
   --model-path "$MODEL_PATH" \
   --mosaics "$MOSAIC_PATH" \
   --block-size 40000000 \
