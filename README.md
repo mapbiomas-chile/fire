@@ -14,4 +14,3 @@ This repository contains the scripts for mapping burned areas in Chile as part o
 - [Classification pipeline](classification/README.md): how to train the burned-area model and how to run inference on yearly mosaics.
 - [Filtering](filtering/README.md): how to clean classified rasters, polygonize them and compute statistics.
 - [Utilities](utilities/README.md): shared helpers used across the pipeline.
-Hola
