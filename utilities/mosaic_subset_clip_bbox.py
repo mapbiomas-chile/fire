@@ -8,18 +8,39 @@ import geopandas as gpd
 import rasterio
 from rasterio.merge import merge
 
+from fire_regions_bbox_geojson import bbox_envelope_excluding_region
+
+
+def bbox_geom_from_geojson_file(path: Path):
+    """Load a polygon footprint (e.g. exported bbox) and return (geometry, crs)."""
+    gdf = gpd.read_file(path)
+    if gdf.empty:
+        raise ValueError(f"Bbox GeoJSON has no features: {path}")
+    if gdf.crs is None:
+        raise ValueError(f"Bbox GeoJSON has no CRS: {path}")
+    geom = gdf.union_all()
+    return geom, gdf.crs
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Merge TIFF tiles from a subset folder and clip to the bounding box "
-            "of the convex hull of fire regions (excluding region 5)."
+            "Merge TIFF tiles from a subset folder and clip to merge bounds. "
+            "Either pass fire regions (--geojson) to derive the bbox envelope, "
+            "or pass a precomputed bbox polygon (--bbox-geojson), e.g. from "
+            "fire_regions_bbox_geojson.py."
         )
     )
-    parser.add_argument(
+    region_or_bbox = parser.add_mutually_exclusive_group(required=True)
+    region_or_bbox.add_argument(
         "--geojson",
-        required=True,
-        help="Path to regiones_fuego GeoJSON.",
+        type=Path,
+        help="Fire-regions vector; bbox envelope is computed inside (exclude region 5 by default).",
+    )
+    region_or_bbox.add_argument(
+        "--bbox-geojson",
+        type=Path,
+        help="Ready-made bbox polygon GeoJSON (same CRS as tiles, typically EPSG:4326).",
     )
     parser.add_argument(
         "--subset-dir",
@@ -44,43 +65,33 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def get_convex_hull_bbox(geojson_path: Path, region_field: str, exclude_region: str):
-    gdf = gpd.read_file(geojson_path)
-    if gdf.empty:
-        raise ValueError(f"Input vector is empty: {geojson_path}")
-    if gdf.crs is None:
-        raise ValueError("Input vector has no CRS.")
-    if region_field not in gdf.columns:
-        raise ValueError(
-            f"Field '{region_field}' not found. Available: {list(gdf.columns)}"
-        )
-
-    filtered = gdf[gdf[region_field].astype(str) != str(exclude_region)]
-    if filtered.empty:
-        raise ValueError("No features left after filtering excluded region.")
-
-    hull = filtered.union_all().convex_hull
-    return hull.envelope, filtered.crs
-
-
 def main() -> int:
     args = parse_args()
-    geojson_path = Path(args.geojson)
     subset_dir = Path(args.subset_dir)
     output_path = Path(args.output)
 
-    if not geojson_path.exists():
-        raise FileNotFoundError(f"GeoJSON not found: {geojson_path}")
+    if args.bbox_geojson is not None:
+        bbox_path = Path(args.bbox_geojson)
+        if not bbox_path.exists():
+            raise FileNotFoundError(f"Bbox GeoJSON not found: {bbox_path}")
+        bbox_geom, bbox_crs = bbox_geom_from_geojson_file(bbox_path)
+        print(f"[INFO] Using bbox polygon from: {bbox_path}")
+    else:
+        geojson_path = Path(args.geojson)
+        if not geojson_path.exists():
+            raise FileNotFoundError(f"GeoJSON not found: {geojson_path}")
+        bbox_geom, bbox_crs = bbox_envelope_excluding_region(
+            geojson_path,
+            region_field=args.region_field,
+            exclude_region=args.exclude_region,
+        )
+
     if not subset_dir.exists():
         raise FileNotFoundError(f"Subset directory not found: {subset_dir}")
 
     tif_paths = sorted(subset_dir.rglob("*.tif"))
     if not tif_paths:
         raise ValueError(f"No .tif files found in: {subset_dir}")
-
-    bbox_geom, bbox_crs = get_convex_hull_bbox(
-        geojson_path, args.region_field, args.exclude_region
-    )
 
     srcs = [rasterio.open(p) for p in tif_paths]
     try:
@@ -114,7 +125,7 @@ def main() -> int:
         for src in srcs:
             src.close()
 
-    print(f"[INFO] Mosaic clipped to convex-hull bbox saved at: {output_path}")
+    print(f"[INFO] Mosaic clipped to bbox bounds saved at: {output_path}")
     return 0
 
 

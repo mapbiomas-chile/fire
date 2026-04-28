@@ -8,6 +8,8 @@ import geopandas as gpd
 import rasterio
 from shapely.geometry import box
 
+from fire_regions_bbox_geojson import convex_hull_excluding_region
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -34,26 +36,6 @@ def parse_args() -> argparse.Namespace:
         help="Optional text output path (one intersecting tile path per line).",
     )
     return parser.parse_args()
-
-
-def build_convex_hull(vector_path: Path, region_field: str, exclude_region: str):
-    gdf = gpd.read_file(vector_path)
-    if gdf.empty:
-        raise ValueError(f"Input vector is empty: {vector_path}")
-    if gdf.crs is None:
-        raise ValueError("Input vector has no CRS. Define CRS before running.")
-    if region_field not in gdf.columns:
-        raise ValueError(
-            f"Field '{region_field}' not found. Available fields: {list(gdf.columns)}"
-        )
-
-    filtered = gdf[gdf[region_field].astype(str) != str(exclude_region)]
-    if filtered.empty:
-        raise ValueError(
-            f"Filtering removed all features. Check --region-field and --exclude-region."
-        )
-
-    return filtered.union_all().convex_hull, filtered.crs
 
 
 def find_intersecting_tiles(tiles_dir: Path, hull_geom, hull_crs) -> list[Path]:
@@ -89,8 +71,10 @@ def main() -> int:
     if not tiles_dir.exists():
         raise FileNotFoundError(f"Tiles directory not found: {tiles_dir}")
 
-    hull_geom, hull_crs = build_convex_hull(
-        vector_path, args.region_field, args.exclude_region
+    hull_geom, hull_crs = convex_hull_excluding_region(
+        vector_path,
+        region_field=args.region_field,
+        exclude_region=args.exclude_region,
     )
     intersecting_tiles = find_intersecting_tiles(tiles_dir, hull_geom, hull_crs)
 
