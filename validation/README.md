@@ -7,7 +7,8 @@ Scripts to validate and prepare reference layers used to evaluate the burned-are
 | File | Purpose |
 | --- | --- |
 | `reproject_to_equal_area.py` | Reprojects a vector layer to an equal-area CRS suitable for Chile at national level and annotates each feature with its area. |
-| `plot_area_distribution.py` | Plots the polygon-area distribution (in hectares) of a vector layer with linear and log x-axis panels. |
+| `split_vector_by_year.py` | Splits a vector layer into one GeoPackage per calendar year (default year column: `Season`). |
+| `plot_area_distribution.py` | Plots the polygon-area distribution (in hectares): log x-axis histogram plus a linear-scale ruler for the same range. |
 | `filter_large_polygons.py` | Keeps only polygons whose area exceeds a minimum threshold in hectares. |
 | `export_large_scars_individual.py` | Exports one GeoPackage per large scar, named by scar ID, area and year. |
 | `intersect_large_scars_with_classified.py` | Intersects each large scar with classified polygons from the same year and writes one GeoPackage per scar. |
@@ -40,10 +41,39 @@ python validation/reproject_to_equal_area.py \
     --target-crs EPSG:32719
 ```
 
+## Split by year
+
+### `split_vector_by_year.py`
+Reads a vector layer and writes **one GeoPackage per year**. The default year attribute is `Season` (typical for CONAF-style seasons); use `--year-column` for another field. Output files are `{prefix}_{year}.gpkg` (prefix defaults to the input filename stem). Each file contains a single layer whose name matches that stem. Rows with missing or unparseable years are skipped with a warning.
+
+Typical flow: reproject to equal area (so `area_ha` exists), then split, then run `plot_area_distribution.py` per file (pass `--layer` equal to the file stem, since each yearly GPKG names its layer that way).
+
+```bash
+python validation/split_vector_by_year.py \
+    --input /path/to/cicatrices_albers.gpkg \
+    --output-dir /path/to/cicatrices_by_year
+```
+
+Optional arguments: `--year-column`, `--layer` (when reading a multi-layer input), `--prefix` (output filename prefix).
+
+Plot area distributions for every yearly GPKG in a directory:
+
+```bash
+out_dir=/path/to/cicatrices_by_year/plots
+mkdir -p "$out_dir"
+for f in /path/to/cicatrices_by_year/*.gpkg; do
+  stem=$(basename "$f" .gpkg)
+  python validation/plot_area_distribution.py \
+      --input "$f" \
+      --output "$out_dir/${stem}_area_distribution.png" \
+      --layer "$stem"
+done
+```
+
 ## Area distribution plot
 
 ### `plot_area_distribution.py`
-Reads a vector layer (typically the output of `reproject_to_equal_area.py`) and produces a two-panel figure of the polygon-area distribution. The left panel uses a linear x-axis and the right panel a log-10 x-axis with tick labels kept in their linear-equivalent hectare values. The log panel is useful when areas span several orders of magnitude (typical for fire-scar sizes).
+Reads a vector layer (typically the output of `reproject_to_equal_area.py`) and produces a histogram of polygon areas in hectares with a **logarithmic** x-axis and a **linear-scale ruler** below the same numeric range. Expects a column with areas in hectares (default `area_ha`). For GeoPackages produced by `split_vector_by_year.py`, set `--layer` to the filename without `.gpkg`.
 
 ```bash
 python validation/plot_area_distribution.py \
