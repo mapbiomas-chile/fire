@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create yearly total masks combining accumulated and yearly masks."""
+"""Create yearly total masks by OR-ing accumulated masks with per-year thematic masks."""
 
 import argparse
 import os
@@ -18,21 +18,51 @@ ACCUMULATED_MASK_NAMES = [
     "mascara_otra_area_sin_vegetacion_acumulado.tif",
 ]
 
-# Salida de create_agriculture_intersection_mask.py (constante en el tiempo; se une a cada año).
-AGR_INTERSECTION_MASK_NAME = "mascara_agricultura_interseccion_todos_anos.tif"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Create mascara_total_<year>.tif as OR of accumulated masks, optional "
-            "agriculture-intersection mask, and yearly rio_lago/infraestructura masks."
+            "Create mascara_total_<year>.tif as OR of accumulated masks and yearly "
+            "rio_lago, infraestructura, agricultura, and pastura masks."
         )
     )
     parser.add_argument(
         "--masks-dir",
         default="/mnt/e/mapbiomas/fire/lulc_2025/mascaras_acumuladas",
-        help="Directory containing accumulated and yearly mask TIFFs.",
+        help=(
+            "Legacy single directory: accumulated files, yearly masks, and totals live "
+            "here (used when --accumulated-dir is not set)."
+        ),
+    )
+    parser.add_argument(
+        "--mascaras-root",
+        type=Path,
+        default=None,
+        help=(
+            "Layout with subfolders: read accumulated masks from <root>/acumuladas, "
+            "yearly masks from <root>/by_year, write mascara_total_<year>.tif to "
+            "<root>/totales (unless paths are overridden)."
+        ),
+    )
+    parser.add_argument(
+        "--accumulated-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory with mascara_*_acumulado.tif files. "
+            "Required for split layout if --mascaras-root is omitted."
+        ),
+    )
+    parser.add_argument(
+        "--yearly-dir",
+        type=Path,
+        default=None,
+        help="Directory with mascara_rio_lago_<year>.tif etc. (split layout).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory where mascara_total_<year>.tif are written (split layout).",
     )
     parser.add_argument(
         "--from-year",
@@ -45,15 +75,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=2024,
         help="Last year to process, inclusive (default: 2024).",
-    )
-    parser.add_argument(
-        "--agriculture-intersection-mask",
-        type=Path,
-        default=None,
-        help=(
-            "Optional 0/1 mask (same grid as other masks) OR'ed into every yearly total. "
-            f"If omitted, uses <masks-dir>/{AGR_INTERSECTION_MASK_NAME} when that file exists."
-        ),
     )
     parser.add_argument(
         "--workers",
@@ -77,22 +98,28 @@ def read_mask(path: Path) -> np.ndarray:
 
 def write_total_for_year(
     year: int,
-    masks_dir: Path,
+    yearly_dir: Path,
+    output_dir: Path,
     accumulated_union: np.ndarray,
     base_profile: dict,
 ) -> Path:
-    """Compute OR(accumulated_union, rio_year, infra_year) and write mascara_total_<year>.tif."""
-    rio_path = masks_dir / f"mascara_rio_lago_{year}.tif"
-    infra_path = masks_dir / f"mascara_infraestructura_{year}.tif"
+    """Compute OR of accumulated union and yearly thematic masks; write mascara_total_<year>.tif."""
+    rio_path = yearly_dir / f"mascara_rio_lago_{year}.tif"
+    infra_path = yearly_dir / f"mascara_infraestructura_{year}.tif"
+    agr_path = yearly_dir / f"mascara_agricultura_{year}.tif"
+    past_path = yearly_dir / f"mascara_pastura_{year}.tif"
 
     rio_mask = read_mask(rio_path) > 0
     infra_mask = read_mask(infra_path) > 0
+    agr_mask = read_mask(agr_path) > 0
+    past_mask = read_mask(past_path) > 0
 
-    total_mask = np.logical_or.reduce([accumulated_union, rio_mask, infra_mask]).astype(
-        np.uint8
-    )
+    total_mask = np.logical_or.reduce(
+        [accumulated_union, rio_mask, infra_mask, agr_mask, past_mask]
+    ).astype(np.uint8)
 
-    output_path = masks_dir / f"mascara_total_{year}.tif"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"mascara_total_{year}.tif"
     profile = dict(base_profile)
     with rasterio.open(output_path, "w", **profile) as dst:
         dst.write(total_mask, 1)
@@ -100,40 +127,65 @@ def write_total_for_year(
     return output_path
 
 
+def _resolve_directories(args: argparse.Namespace) -> tuple[Path, Path, Path]:
+    """Return (accumulated_dir, yearly_dir, output_dir)."""
+    if args.mascaras_root is not None:
+        root = Path(args.mascaras_root)
+        acc = Path(args.accumulated_dir) if args.accumulated_dir else root / "acumuladas"
+        yrl = Path(args.yearly_dir) if args.yearly_dir else root / "by_year"
+        out = Path(args.output_dir) if args.output_dir else root / "totales"
+        return acc, yrl, out
+
+    if (
+        args.accumulated_dir is not None
+        or args.yearly_dir is not None
+        or args.output_dir is not None
+    ):
+        missing = []
+        if args.accumulated_dir is None:
+            missing.append("--accumulated-dir")
+        if args.yearly_dir is None:
+            missing.append("--yearly-dir")
+        if args.output_dir is None:
+            missing.append("--output-dir")
+        if missing:
+            raise ValueError(
+                "For a split layout, pass --mascaras-root or all of "
+                f"{', '.join(['--accumulated-dir', '--yearly-dir', '--output-dir'])}. "
+                f"Missing: {', '.join(missing)}"
+            )
+        return Path(args.accumulated_dir), Path(args.yearly_dir), Path(args.output_dir)
+
+    single = Path(args.masks_dir)
+    return single, single, single
+
+
 def main() -> int:
     args = parse_args()
-    masks_dir = Path(args.masks_dir)
+    accumulated_dir, yearly_dir, output_dir = _resolve_directories(args)
 
-    if not masks_dir.exists():
-        raise FileNotFoundError(f"Masks directory not found: {masks_dir}")
+    if not accumulated_dir.is_dir():
+        raise FileNotFoundError(
+            f"Accumulated masks directory not found: {accumulated_dir}"
+        )
+    if not yearly_dir.is_dir():
+        raise FileNotFoundError(f"Yearly masks directory not found: {yearly_dir}")
     if args.from_year > args.to_year:
         raise ValueError("--from-year must be <= --to-year")
+
+    print(f"[INFO] accumulated-dir: {accumulated_dir}")
+    print(f"[INFO] yearly-dir:     {yearly_dir}")
+    print(f"[INFO] output-dir:     {output_dir}")
 
     accumulated_arrays = []
     base_profile = None
     for name in ACCUMULATED_MASK_NAMES:
-        path = masks_dir / name
+        path = accumulated_dir / name
         with rasterio.open(path) as src:
             data = src.read(1)
             if base_profile is None:
                 base_profile = src.profile.copy()
             accumulated_arrays.append(data > 0)
-
-    agr_path = (
-        args.agriculture_intersection_mask
-        if args.agriculture_intersection_mask is not None
-        else masks_dir / AGR_INTERSECTION_MASK_NAME
-    )
-    if agr_path.exists():
-        with rasterio.open(agr_path) as src:
-            accumulated_arrays.append(src.read(1) > 0)
-        print(f"[INFO] Including in union: {agr_path}")
-    elif args.agriculture_intersection_mask is not None:
-        raise FileNotFoundError(f"Agriculture intersection mask not found: {agr_path}")
-    else:
-        print(
-            f"[WARN] Agriculture intersection mask not found, skipping: {agr_path}"
-        )
 
     accumulated_union = np.logical_or.reduce(accumulated_arrays)
 
@@ -161,7 +213,9 @@ def main() -> int:
 
     if n_workers <= 1:
         for year in years:
-            out = write_total_for_year(year, masks_dir, accumulated_union, base_profile)
+            out = write_total_for_year(
+                year, yearly_dir, output_dir, accumulated_union, base_profile
+            )
             print(f"[INFO] Saved: {out}")
     else:
         print(f"[INFO] Parallel years with {n_workers} worker thread(s) ({n_years} year(s), {cpus} CPU(s))")
@@ -170,7 +224,8 @@ def main() -> int:
                 ex.submit(
                     write_total_for_year,
                     year,
-                    masks_dir,
+                    yearly_dir,
+                    output_dir,
                     accumulated_union,
                     base_profile,
                 ): year

@@ -6,6 +6,8 @@ This repository contains the scripts for mapping burned areas in Chile as part o
 
 - `classification/` — Training and inference pipeline for the burned-area neural network model, including local and Slurm launchers. See [classification/README.md](classification/README.md).
 - `filtering/` — Post-classification utilities: mask building, spatial filtering, polygonization and statistical summaries. See [filtering/README.md](filtering/README.md).
+- `validation/` — Reference fire-scar layers: equal-area reprojection (vector and raster), yearly split/dissolve, area plots, polygon filters, and intersections with classified polygons. See [validation/README.md](validation/README.md).
+- `test/` — Optional probes (e.g. Google Cloud Storage permissions). Not part of the core pipeline.
 - `utilities/` — Auxiliary tooling: GEE downloads, tile listing, mosaicking and metadata inspection. See [utilities/README.md](utilities/README.md).
 - `collection_010/` — Legacy assets and notebooks from Collection 0.1.0.
 
@@ -13,4 +15,6 @@ This repository contains the scripts for mapping burned areas in Chile as part o
 
 - [Classification pipeline](classification/README.md): how to train the burned-area model and how to run inference on yearly mosaics.
 - [Filtering](filtering/README.md): how to clean classified rasters, polygonize them and compute statistics.
+- [Validation](validation/README.md): preparing reference scars, aligning CRS with classified products, and intersection exports.
 - [Utilities](utilities/README.md): shared helpers used across the pipeline.
+- [Test utilities](test/README.md): optional checks (e.g. cloud storage access).
