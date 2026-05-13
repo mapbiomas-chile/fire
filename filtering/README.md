@@ -8,9 +8,10 @@ A typical post-classification run chains these steps:
 
 1. **Build non-burnable masks** — use `create_accumulated_class_masks.py`, `create_yearly_masks.py` and `create_total_masks_by_year.py` to combine yearly land-cover layers into one binary mask per year (`1` = remove, `0` = keep).
 2. **Filter classified rasters** — run `filter_classified_parallel.py` to apply the year-matched mask to every classified tile.
-3. **Polygonize** — turn the filtered rasters into one GeoPackage per tile using `polygonize_mask_parallel.py`.
-4. **Summarize** — render region-grouped polygon-area histograms with `summarize_histograms_by_region.py` to inspect the distribution and pick a minimum-area threshold.
-5. **Apply thresholds** — drop small polygons with `filter_polygons_by_threshold.py` using the chosen minimum area.
+3. **Equal-area rasters (validation)** — warp filtered tiles with [`../validation/reproject_raster_to_equal_area.py`](../validation/reproject_raster_to_equal_area.py). Optionally merge all regional tiles into **one GeoTIFF per calendar year** with [`../validation/merge_reprojected_tiles_by_year.py`](../validation/merge_reprojected_tiles_by_year.py) (see [../validation/README.md](../validation/README.md)).
+4. **Polygonize** — turn the warped rasters (per tile or yearly mosaic) into one GeoPackage per input using `polygonize_mask_parallel.py`.
+5. **Summarize** — render region-grouped polygon-area histograms with `summarize_histograms_by_region.py` to inspect the distribution and pick a minimum-area threshold.
+6. **Apply thresholds** — drop small polygons with `filter_polygons_by_threshold.py` using the chosen minimum area.
 
 Auxiliary scripts (GEE downloads, tile listing, mosaicking and metadata inspection) support the steps above and can be used standalone.
 

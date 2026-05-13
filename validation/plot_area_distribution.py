@@ -2,7 +2,7 @@
 """Plot the polygon-area distribution (in hectares) of a vector layer.
 
 Expects the input layer to contain a numeric column with areas in hectares
-(by default ``area_ha``), as produced by ``reproject_to_equal_area.py``.
+(by default ``area_ha``), as produced by ``reproject_vector_to_equal_area.py``.
 
 One histogram is produced with a logarithmic (base-10) x-axis.  The tick
 labels show linear-equivalent hectare values (e.g. 0.1, 1, 10, 100 ...).
