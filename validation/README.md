@@ -1,6 +1,6 @@
 # Validation
 
-Scripts to validate and prepare reference layers used to evaluate the burned-area pipeline (see [../classification/README.md](../classification/README.md) and [../filtering/README.md](../filtering/README.md)). Most tools work on **vector** reference data (e.g. fire-scar polygons). **`reproject_raster_to_equal_area.py`** warps classified **GeoTIFFs** to the same equal-area CRS as vectors; **`merge_reprojected_tiles_by_year.py`** optionally mosaics regional tiles into one raster per year before polygonize or QA.
+Scripts to validate and prepare reference layers used to evaluate the burned-area pipeline (see [../classification/README.md](../classification/README.md) and [../filtering/README.md](../filtering/README.md)). Most tools live in this **`validation/`** directory. **Polygonizing** classified rasters (mask pixels → GeoPackages) uses **`filtering/polygonize_mask_parallel.py`** — it is **not** under `validation/`; see [filtering/README.md](../filtering/README.md). **`reproject_raster_to_equal_area.py`** warps GeoTIFFs to the same equal-area CRS as vectors; **`merge_reprojected_tiles_by_year.py`** optionally mosaics regional tiles into one raster per year before polygonize or QA.
 
 ## Contents
 
@@ -11,7 +11,7 @@ Scripts to validate and prepare reference layers used to evaluate the burned-are
 | `merge_reprojected_tiles_by_year.py` | Mosaics regional equal-area GeoTIFFs into one raster per calendar year (optional step before polygonize). |
 | `split_vector_by_year.py` | Splits a vector layer into one GeoPackage per calendar year (default year column: `Season`). |
 | `plot_area_distribution.py` | Plots the polygon-area distribution (in hectares): log x-axis histogram plus a linear-scale ruler for the same range. |
-| `intersect_top_n_scars_with_classified.py` | Crosses a scar vector catalog with polygonized classified tiles: for each scar (optionally top N by area), finds intersecting classified polygons by year and writes one GeoPackage (`scar` + `classified_hits`) for downstream indices. |
+| `intersect_top_n_scars_with_classified.py` | Crosses a scar catalog with **polygonized** classified GeoPackages (produced with **`../filtering/polygonize_mask_parallel.py`**). Optional top N / `--by-year`; output: `scar` + `classified_hits` layers. |
 
 ## Equal-area reprojection (vectors)
 
@@ -132,8 +132,8 @@ Reads one **scar catalog** (`--catalog`) and all classified polygon GeoPackages 
 
 A practical layout is:
 
-- **Cicatrices:** split by calendar year (e.g. with `split_vector_by_year.py`) so each `--catalog` holds only events for one year. That keeps runs small and matches how you study seasons. Alternatively, keep one national catalog and use **`--by-year`** so the script still writes **separate GeoPackages per year** from the same catalog.
-- **Clasificado polygonizado:** typically **one GeoPackage per MapBiomas tile** (region + year), or **one per yearly mosaic** after `merge_reprojected_tiles_by_year.py` + [`filtering/polygonize_mask_parallel.py`](../filtering/polygonize_mask_parallel.py). Put every yearly GPKG the run needs in the same `--classified-dir`.
+- **Scars:** split by calendar year (e.g. with `split_vector_by_year.py`) so each `--catalog` holds only events for one year. That keeps runs small and matches season-based workflows. Alternatively, keep one national catalog and use **`--by-year`** so the script still writes **separate GeoPackages per year** from the same catalog.
+- **Polygonized classified data:** produced with **`filtering/polygonize_mask_parallel.py`** (in the **`filtering/`** directory of this repo). Typical outputs: **one GeoPackage per MapBiomas tile** (region + year), or **one per yearly mosaic** after `merge_reprojected_tiles_by_year.py` and polygonize. Put every yearly GeoPackage the run needs in the same `--classified-dir`.
 
 The script loads **every** `*.gpkg` in `--classified-dir`, groups them by **year** (fourth underscore-separated token in the stem), and for each scar opens only the files for `scar_year`. Within that year it uses every classified file listed for that year (multiple regions or a single mosaic).
 
@@ -151,13 +151,13 @@ The stem must split on `_` into at least four segments. **Region** = third token
 
 #### CRS
 
-The catalog must use a **projected** CRS (the script rejects geographic CRSs so areas stay meaningful). Scars and classified polygons should share that CRS (e.g. Chile Albers: `reproject_vector_to_equal_area.py` on scars, `reproject_raster_to_equal_area.py` before polygonize on classified rasters).
+The catalog must use a **projected** CRS (the script rejects geographic CRSs so areas stay meaningful). Scars and classified polygons should share that CRS (e.g. Chile Albers: `reproject_vector_to_equal_area.py` on scars, `reproject_raster_to_equal_area.py` on classified rasters, then polygonize with **`filtering/polygonize_mask_parallel.py`**).
 
-#### From rasters to polygon GeoPackages
+#### From rasters to polygon GeoPackages (script in `filtering/`)
 
-Use [`filtering/polygonize_mask_parallel.py`](../filtering/polygonize_mask_parallel.py) (see [filtering/README.md](../filtering/README.md)). One output GeoPackage per warped GeoTIFF; year and region tokens stay aligned with the convention above.
+**Polygonization is implemented in the `filtering/` package**, not in `validation/`: run [`../filtering/polygonize_mask_parallel.py`](../filtering/polygonize_mask_parallel.py) (documented in [filtering/README.md](../filtering/README.md)). It writes **one GeoPackage per input GeoTIFF**; year and region tokens in the stem stay aligned with the filename convention above when you use MapBiomas-style names (or yearly mosaic stems such as `filtered_*_albers_2013.tif`).
 
-Polygonize one year and all regions (adjust `--pattern` to your tile naming):
+From the repository root:
 
 ```bash
 python filtering/polygonize_mask_parallel.py \
