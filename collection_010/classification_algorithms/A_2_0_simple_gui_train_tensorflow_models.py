@@ -1,61 +1,25 @@
-# last_update: '2026/01/26', github:'mapbiomas/chile-fire', source: 'IPAM', contact: 'contato@mapbiomas.org'
-# MapBiomas Fire Classification Algorithms Step A_2_0 - Simple Graphic User Interface for Training Models
-
-# ====================================
-# 📦 IMPORT LIBRARIES
-# ====================================
-
-import os
-import re
-import time
-import gcsfs
-import ipywidgets as widgets
-import sys
-from IPython.display import display, clear_output
-from ipywidgets import VBox, HBox
-
-# TensorFlow in compatibility mode
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
-
-# ====================================
-# 🌍 GLOBAL SETTINGS AND FILESYSTEM
-# ====================================
-
-if 'bucket_name' not in globals():
-    bucket_name = 'mapbiomas-fire'
-
-if 'ee_project' not in globals():
-    ee_project = 'mapbiomas-chile'
-
-if 'collection_name' not in globals():
-    collection_name = 'col1'
-
-if 'models_folder' not in globals():
-    models_folder = f'models_{collection_name}'
-
-if 'base_subfolder' not in globals():
-    base_subfolder = 'b24'
-
-# Reutilizar fs si ya existe
-if 'fs' not in globals():
-    fs = gcsfs.GCSFileSystem(project=ee_project)
-
 # ====================================
 # 🎛️ INTERFACE CLASS
 # ====================================
 
 class TrainingInterface:
     """
-    Interface for listing training sample files and triggering model training.
+    Interface for manually selecting training sample files and triggering model training.
     """
 
     def __init__(self, country, preparation_function, log_func):
         self.country = country
         self.preparation_function = preparation_function
         self.log = log_func
-        self.checkboxes = []
+
         self.training_files = []
+        self.sample_selector = None
+        self.version_widget = None
+        self.region_widget = None
+
+        self.selected_version = None
+        self.selected_region = None
+
         self.render_interface()
 
     def list_training_samples_folder(self):
@@ -63,25 +27,37 @@ class TrainingInterface:
         List files in 'training_samples' folder for the selected country.
         """
         path = f"{BASE_DATASET_PATH}/training_samples/"
+
         try:
-            return [file.split('/')[-1] for file in fs.ls(path) if file.split('/')[-1]]
+            files = fs.ls(path)
+            return sorted([
+                file.split('/')[-1]
+                for file in files
+                if file.split('/')[-1].lower().endswith((".tif", ".tiff"))
+            ])
         except FileNotFoundError:
+            return []
+        except Exception as e:
+            self.log(f"[ERROR] Could not list training samples: {str(e)}")
             return []
 
     def get_active_checkbox(self):
         """
-        Returns the label of the selected checkbox.
+        Backward-compatible method.
+        Returns a synthetic label using the manually selected version and region.
+        This keeps A_2_1 working without major changes.
         """
-        for checkbox in self.checkboxes:
-            if checkbox.value:
-                return checkbox.description
-        return None
+        if self.selected_version is None or self.selected_region is None:
+            return None
+
+        return f"trainings_{self.selected_version}_{self.selected_region}"
 
     def list_existing_models(self):
         """
-        Return a set of model checkpoint base names (excluding hyperparameters).
+        Return a set of model checkpoint base names.
         """
         prefix_path = f"{BASE_DATASET_PATH}/{models_folder}/"
+
         try:
             files = fs.ls(prefix_path)
             model_files = [
@@ -90,96 +66,51 @@ class TrainingInterface:
                 if 'ckpt' in f and 'hyperparameters' not in f
             ]
             return set(model_files)
+
         except Exception as e:
             self.log(f"[WARNING] Could not list existing models: {str(e)}")
             return set()
 
-    def generate_checkboxes(self):
-        """
-        Generate checkboxes for unique model IDs, matching training script naming and flagging existing models.
-        """
-        seen_ids = set()
-        fs.invalidate_cache()
-        existing_models = self.list_existing_models()
-
-        formatted_checkboxes = []
-
-        for file in self.training_files:
-            match = re.search(r'_v(\d+)_.*?_r(\d+)(?:_[^_]+)*?_(\d{4})', file)
-            if match:
-                version = match.group(1)
-                region = match.group(2)
-                model_id = f'v{version}_r{region}'
-                model_ckpt = f'{collection_name}_{self.country}_{model_id}_rnn_lstm_ckpt'
-
-                if model_id not in seen_ids:
-                    label = f'trainings_{model_id}'
-                    exists = model_ckpt in existing_models
-
-                    if exists:
-                        label += ' ⚠️'
-
-                    checkbox = widgets.Checkbox(
-                        value=False,
-                        description=label,
-                        layout=widgets.Layout(width='auto')
-                    )
-                    checkbox.observe(self.on_checkbox_click, names='value')
-                    formatted_checkboxes.append(checkbox)
-                    seen_ids.add(model_id)
-
-        self.checkboxes = formatted_checkboxes
-        return widgets.VBox(
-            formatted_checkboxes,
-            layout=widgets.Layout(
-                border='1px solid black',
-                padding='10px',
-                margin='10px 0',
-                max_height='220px',
-                overflow_y='auto'
-            )
-        )
-
-    def on_checkbox_click(self, change):
-        """
-        Ensure that only one checkbox is selected at a time.
-        """
-        if change.new:
-            for checkbox in self.checkboxes:
-                if checkbox != change.owner:
-                    checkbox.value = False
-
     def train_models_click(self, b):
         """
-        Handles the training button click. Extracts selected checkbox info,
-        matches training sample filenames, and calls the preparation function.
+        Train using only the manually selected sample files.
         """
-        active_description = self.get_active_checkbox()
-        if not active_description:
-            self.log("[INFO] No checkbox selected.")
+
+        selected_files = list(self.sample_selector.value)
+
+        if len(selected_files) == 0:
+            self.log("[ERROR] No sample files selected.")
             return
 
-        clean_label = active_description.replace('✅', '').replace('⚠️', '').strip()
-        check_parts = clean_label.split('_')
+        version = self.version_widget.value.strip()
+        region = self.region_widget.value.strip()
 
-        if len(check_parts) < 3:
-            self.log(f"[ERROR] Unexpected checkbox label format: {clean_label}")
+        if version == "":
+            self.log("[ERROR] Version is empty. Example: v1")
             return
 
-        version = check_parts[1]
-        region = check_parts[2]
+        if region == "":
+            self.log("[ERROR] Region is empty. Example: r1")
+            return
 
-        pattern = re.compile(rf".*_({version})_.*_{region}_.*\.tif")
-        selected_files = [f for f in self.training_files if pattern.search(f)]
+        self.selected_version = version
+        self.selected_region = region
 
-        if selected_files:
-            self.log(f"[INFO] Selected files for training: {selected_files}")
-            self.preparation_function(selected_files)
-        else:
-            self.log(f"[WARNING] No matching training samples found for region: {region}")
+        self.log("========================================")
+        self.log("[INFO] Manual sample selection mode")
+        self.log(f"[INFO] Selected model version: {self.selected_version}")
+        self.log(f"[INFO] Selected model region: {self.selected_region}")
+        self.log(f"[INFO] Number of selected samples: {len(selected_files)}")
+        self.log("========================================")
+
+        for file in selected_files:
+            self.log(f"[SAMPLE] {file}")
+
+        self.preparation_function(selected_files)
 
     def create_scrollable_text_panel(self, title, items, border_color='black', height='150px'):
         title_widget = widgets.HTML(value=f"<b>{title}</b>")
+
         output = widgets.Output(
             layout=widgets.Layout(
                 border=f'1px solid {border_color}',
@@ -189,12 +120,14 @@ class TrainingInterface:
                 padding='6px'
             )
         )
+
         with output:
             if items:
                 for item in items:
                     print(f" - {item}")
             else:
                 print("No items found.")
+
         return VBox([title_widget, output])
 
     def display_existing_models(self):
@@ -202,19 +135,23 @@ class TrainingInterface:
         Display a scrollable list of existing models from the GCS bucket.
         """
         fs.invalidate_cache()
+
         existing = sorted(self.list_existing_models())
+
         panel = self.create_scrollable_text_panel(
             title=f"Existing trained models ({len(existing)}):",
             items=existing,
             border_color='green',
             height='150px'
         )
+
         display(panel)
 
     def render_interface(self):
         """
-        Renders the full interface: title, file list, checkboxes, button.
+        Renders the full interface.
         """
+
         clear_output(wait=True)
 
         self.training_files = self.list_training_samples_folder()
@@ -224,43 +161,79 @@ class TrainingInterface:
             value=(
                 f"<b>Selected country:</b> {self.country} ({num_files} files found)"
                 f"<br><b>Base subfolder:</b> <code>{base_subfolder or '(root)'}</code>"
+                f"<br><b>Mode:</b> Manual sample selection"
             ),
             layout=widgets.Layout(margin='0 0 10px 0')
         )
+
         display(header)
 
         files_panel = self.create_scrollable_text_panel(
-            title="Sample files:",
+            title="Available sample files:",
             items=self.training_files,
             border_color='black',
             height='180px'
         )
+
         display(files_panel)
 
         if num_files == 0:
-            display(widgets.HTML("<b style='color: red;'>No files found in 'training_samples'.</b>"))
+            display(widgets.HTML("<b style='color: red;'>No files found in training_samples.</b>"))
             return
 
         self.display_existing_models()
 
-        samples_title = widgets.HTML(
-            value="<b>Sample by region, and versions available to run the training:</b>",
+        self.version_widget = widgets.Text(
+            value="v1",
+            description="Version:",
+            placeholder="Example: v1",
+            layout=widgets.Layout(width="300px")
+        )
+
+        self.region_widget = widgets.Text(
+            value="r1",
+            description="Region:",
+            placeholder="Example: r1",
+            layout=widgets.Layout(width="300px")
+        )
+
+        self.sample_selector = widgets.SelectMultiple(
+            options=self.training_files,
+            description="Samples:",
+            rows=18,
+            layout=widgets.Layout(width="95%", height="380px")
+        )
+
+        selector_title = widgets.HTML(
+            value="<b>Select the sample files to use for training:</b>",
             layout=widgets.Layout(margin='10px 0 5px 0')
         )
-        display(samples_title)
 
-        checkboxes_panel = self.generate_checkboxes()
-        display(checkboxes_panel)
+        display(selector_title)
+        display(self.version_widget)
+        display(self.region_widget)
+        display(self.sample_selector)
 
         train_button = widgets.Button(
-            description="Train Models",
+            description="Train selected samples",
             button_style='success',
-            layout=widgets.Layout(width='200px')
+            layout=widgets.Layout(width='240px')
         )
+
         train_button.on_click(self.train_models_click)
-        display(HBox([train_button], layout=widgets.Layout(justify_content='flex-start', margin='20px 0')))
+
+        display(
+            HBox(
+                [train_button],
+                layout=widgets.Layout(
+                    justify_content='flex-start',
+                    margin='20px 0'
+                )
+            )
+        )
 
         footer = widgets.HTML(
-            "<b style='color: orange;'>⚠️ Existing models will be overwritten if selected again.</b>"
+            "<b style='color: orange;'>⚠️ Existing models with the same version and region will be overwritten.</b>"
         )
+
         display(footer)
