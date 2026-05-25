@@ -1,3 +1,47 @@
+# last_update: '2026/01/26', github:'mapbiomas/chile-fire', source: 'IPAM', contact: 'contato@mapbiomas.org'
+# MapBiomas Fire Classification Algorithms Step A_2_0 - Simple Graphic User Interface for Training Models
+# Modified: manual sample selection
+
+# ====================================
+# 📦 IMPORT LIBRARIES
+# ====================================
+
+import os
+import re
+import time
+import gcsfs
+import ipywidgets as widgets
+import sys
+from IPython.display import display, clear_output
+
+# TensorFlow in compatibility mode
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+
+
+# ====================================
+# 🌍 GLOBAL SETTINGS AND FILESYSTEM
+# ====================================
+
+if 'bucket_name' not in globals():
+    bucket_name = 'mapbiomas-fire'
+
+if 'ee_project' not in globals():
+    ee_project = 'mapbiomas-chile'
+
+if 'collection_name' not in globals():
+    collection_name = 'col1'
+
+if 'models_folder' not in globals():
+    models_folder = f'models_{collection_name}'
+
+if 'base_subfolder' not in globals():
+    base_subfolder = 'b24'
+
+if 'fs' not in globals():
+    fs = gcsfs.GCSFileSystem(project=ee_project)
+
+
 # ====================================
 # 🎛️ INTERFACE CLASS
 # ====================================
@@ -24,28 +68,38 @@ class TrainingInterface:
 
     def list_training_samples_folder(self):
         """
-        List files in 'training_samples' folder for the selected country.
+        List files in 'training_samples' folder.
         """
         path = f"{BASE_DATASET_PATH}/training_samples/"
 
         try:
+            fs.invalidate_cache()
             files = fs.ls(path)
-            return sorted([
+
+            sample_files = [
                 file.split('/')[-1]
                 for file in files
                 if file.split('/')[-1].lower().endswith((".tif", ".tiff"))
-            ])
+            ]
+
+            return sorted(sample_files)
+
         except FileNotFoundError:
+            self.log(f"[ERROR] Folder not found: gs://{path}")
             return []
+
         except Exception as e:
-            self.log(f"[ERROR] Could not list training samples: {str(e)}")
+            self.log(f"[ERROR] Could not list training samples from gs://{path}: {str(e)}")
             return []
 
     def get_active_checkbox(self):
         """
-        Backward-compatible method.
-        Returns a synthetic label using the manually selected version and region.
-        This keeps A_2_1 working without major changes.
+        Backward-compatible method used by A_2_1.
+
+        A_2_1 still expects something like:
+        trainings_v1_r1
+
+        Here we generate that label from the manually defined version and region.
         """
         if self.selected_version is None or self.selected_region is None:
             return None
@@ -59,12 +113,15 @@ class TrainingInterface:
         prefix_path = f"{BASE_DATASET_PATH}/{models_folder}/"
 
         try:
+            fs.invalidate_cache()
             files = fs.ls(prefix_path)
+
             model_files = [
                 os.path.basename(f).split('.')[0]
                 for f in files
                 if 'ckpt' in f and 'hyperparameters' not in f
             ]
+
             return set(model_files)
 
         except Exception as e:
@@ -75,7 +132,6 @@ class TrainingInterface:
         """
         Train using only the manually selected sample files.
         """
-
         selected_files = list(self.sample_selector.value)
 
         if len(selected_files) == 0:
@@ -93,6 +149,10 @@ class TrainingInterface:
             self.log("[ERROR] Region is empty. Example: r1")
             return
 
+        # Optional cleanup to avoid spaces in model names
+        version = version.replace(" ", "_")
+        region = region.replace(" ", "_")
+
         self.selected_version = version
         self.selected_region = region
 
@@ -109,6 +169,9 @@ class TrainingInterface:
         self.preparation_function(selected_files)
 
     def create_scrollable_text_panel(self, title, items, border_color='black', height='150px'):
+        """
+        Create a scrollable text panel.
+        """
         title_widget = widgets.HTML(value=f"<b>{title}</b>")
 
         output = widgets.Output(
@@ -128,14 +191,12 @@ class TrainingInterface:
             else:
                 print("No items found.")
 
-        return VBox([title_widget, output])
+        return widgets.VBox([title_widget, output])
 
     def display_existing_models(self):
         """
         Display a scrollable list of existing models from the GCS bucket.
         """
-        fs.invalidate_cache()
-
         existing = sorted(self.list_existing_models())
 
         panel = self.create_scrollable_text_panel(
@@ -149,9 +210,8 @@ class TrainingInterface:
 
     def render_interface(self):
         """
-        Renders the full interface.
+        Render the full manual selection interface.
         """
-
         clear_output(wait=True)
 
         self.training_files = self.list_training_samples_folder()
@@ -178,7 +238,11 @@ class TrainingInterface:
         display(files_panel)
 
         if num_files == 0:
-            display(widgets.HTML("<b style='color: red;'>No files found in training_samples.</b>"))
+            display(
+                widgets.HTML(
+                    "<b style='color: red;'>No files found in training_samples.</b>"
+                )
+            )
             return
 
         self.display_existing_models()
@@ -187,21 +251,21 @@ class TrainingInterface:
             value="v1",
             description="Version:",
             placeholder="Example: v1",
-            layout=widgets.Layout(width="300px")
+            layout=widgets.Layout(width="320px")
         )
 
         self.region_widget = widgets.Text(
             value="r1",
             description="Region:",
-            placeholder="Example: r1",
-            layout=widgets.Layout(width="300px")
+            placeholder="Example: r1, r4, r1_mix, r1r4",
+            layout=widgets.Layout(width="320px")
         )
 
         self.sample_selector = widgets.SelectMultiple(
             options=self.training_files,
             description="Samples:",
-            rows=18,
-            layout=widgets.Layout(width="95%", height="380px")
+            rows=20,
+            layout=widgets.Layout(width="95%", height="420px")
         )
 
         selector_title = widgets.HTML(
@@ -209,7 +273,18 @@ class TrainingInterface:
             layout=widgets.Layout(margin='10px 0 5px 0')
         )
 
+        help_text = widgets.HTML(
+            value=(
+                "<p style='color: gray;'>"
+                "Use Ctrl + click to select multiple samples. "
+                "Only the selected files will be used for training. "
+                "The version and region fields only define the output model name."
+                "</p>"
+            )
+        )
+
         display(selector_title)
+        display(help_text)
         display(self.version_widget)
         display(self.region_widget)
         display(self.sample_selector)
@@ -223,7 +298,7 @@ class TrainingInterface:
         train_button.on_click(self.train_models_click)
 
         display(
-            HBox(
+            widgets.HBox(
                 [train_button],
                 layout=widgets.Layout(
                     justify_content='flex-start',
@@ -233,7 +308,11 @@ class TrainingInterface:
         )
 
         footer = widgets.HTML(
-            "<b style='color: orange;'>⚠️ Existing models with the same version and region will be overwritten.</b>"
+            value=(
+                "<b style='color: orange;'>"
+                "⚠️ Existing models with the same version and region will be overwritten."
+                "</b>"
+            )
         )
 
         display(footer)
