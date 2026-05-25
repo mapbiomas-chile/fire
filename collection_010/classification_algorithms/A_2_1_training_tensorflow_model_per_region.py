@@ -1,7 +1,7 @@
 # last_update: '2026/01/27', github:'mapbiomas/chile-fire', source: 'IPAM', contact: 'contato@mapbiomas.org'
 # MapBiomas Fire Classification Algorithms Step A_2_1_training_tensorflow_model_per_region.py
 ### Step A_2_1 - Functions for training TensorFlow models per region
-### Modified for manual sample selection from A_2_0
+### Modified: compatible with manual sample selection + manual output model name from A_2_0
 
 # ====================================
 # 📦 INSTALL AND IMPORT LIBRARIES
@@ -44,7 +44,6 @@ def install_and_import(package):
         clear_console()
 
 
-# Verificar e instalar pacotes Python
 install_and_import('rasterio')
 install_and_import('gcsfs')
 install_and_import('ipywidgets')
@@ -52,7 +51,6 @@ install_and_import('tqdm')
 
 import rasterio
 
-# TensorFlow 1.x modo compatível
 import tensorflow.compat.v1 as tf
 if tf.__version__.startswith('2'):
     tf.disable_v2_behavior()
@@ -103,9 +101,6 @@ if 'log_message' not in globals():
 # ====================================
 # 🌍 GLOBAL VARIABLES AND DIRECTORY SETUP
 # ====================================
-
-# BASE_DATASET_PATH debe ser algo como:
-# mapbiomas-fire/sudamerica/chile/collection1/b24
 
 LOCAL_BASE_FOLDER = f"/content/{BASE_DATASET_PATH}"
 
@@ -228,34 +223,52 @@ class ModelTrainer:
         start_time = time.time()
 
         # =========================================================
-        # 🔧 MODIFIED SECTION FOR MANUAL A_2_0 INTERFACE
+        # 🔧 MODEL OUTPUT NAME FROM MODIFIED A_2_0
         # =========================================================
-        checkbox_label = self.get_active_checkbox()
 
-        if not checkbox_label:
-            log_message("[ERROR] No active model metadata found.")
-            log_message("[ERROR] Check that A_2_0 was run and version/region were defined.")
-            return
+        metadata = None
 
-        checkbox_label = checkbox_label.replace('⚠️', '').replace('✅', '').strip()
+        if 'interface' in globals() and hasattr(interface, "get_model_metadata"):
+            metadata = interface.get_model_metadata()
 
-        split_name = checkbox_label.split('_')
+        if metadata is None:
+            checkbox_label = self.get_active_checkbox()
 
-        if len(split_name) < 3:
-            log_message(f"[ERROR] Unexpected model label format: {checkbox_label}")
-            log_message("[ERROR] Expected format similar to: trainings_v1_r1")
-            return
+            if not checkbox_label:
+                log_message("[ERROR] No active model metadata found.")
+                log_message("[ERROR] Check that A_2_0 was run and version/region/output were defined.")
+                return
 
-        version = split_name[1]
-        region = "_".join(split_name[2:])
+            checkbox_label = checkbox_label.replace('⚠️', '').replace('✅', '').strip()
+            split_name = checkbox_label.split('_')
+
+            if len(split_name) < 3:
+                log_message(f"[ERROR] Unexpected model label format: {checkbox_label}")
+                log_message("[ERROR] Expected format similar to: trainings_v1_r1")
+                return
+
+            version = split_name[1]
+            region = "_".join(split_name[2:])
+            output_model_name = f"{collection_name}_{self.country}_{version}_{region}_rnn_lstm_ckpt"
+
+        else:
+            version = metadata["version"]
+            region = metadata["region"]
+            output_model_name = metadata["output_model_name"]
+
+        output_model_name = output_model_name.strip().replace(" ", "_")
+
+        if output_model_name == "":
+            output_model_name = f"{collection_name}_{self.country}_{version}_{region}_rnn_lstm_ckpt"
 
         log_message(f"[INFO] Model version selected: {version}")
         log_message(f"[INFO] Model region selected: {region}")
+        log_message(f"[INFO] Output model name: {output_model_name}")
 
-        model_path = f'{self.folder_model}/{collection_name}_{self.country}_{version}_{region}_rnn_lstm_ckpt'
+        model_path = f'{self.folder_model}/{output_model_name}'
         json_path = f'{model_path}_hyperparameters.json'
 
-        log_message(f"[INFO] Model output path: {model_path}")
+        log_message(f"[INFO] Local model path: {model_path}")
 
         with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
             sess.run(init)
@@ -279,6 +292,7 @@ class ModelTrainer:
                 if i % 100 == 0:
                     acc = sess.run(accuracy, feed_dict=validation_dict) * 100
                     saver.save(sess, model_path)
+
                     log_message(
                         f"[PROGRESS] Iteration {i}/{N_ITER} - "
                         f"Validation Accuracy: {acc:.2f}%"
@@ -303,6 +317,7 @@ class ModelTrainer:
                 'TRAINING_INFO': {
                     'version': version,
                     'region': region,
+                    'output_model_name': output_model_name,
                     'training_size': int(training_data.shape[0]),
                     'validation_size': int(validation_data.shape[0]),
                     'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -332,7 +347,11 @@ class ModelTrainer:
 
             duration = time.time() - start_time
 
-            log_message(f"[INFO] Training completed in: {time.strftime('%H:%M:%S', time.gmtime(duration))}")
+            log_message(
+                f"[INFO] Training completed in: "
+                f"{time.strftime('%H:%M:%S', time.gmtime(duration))}"
+            )
+
             log_message(f"[INFO] Final model saved at: {model_path}")
 
 
