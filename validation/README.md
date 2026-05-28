@@ -1,6 +1,6 @@
 # Validation
 
-Scripts to validate and prepare reference layers used to evaluate the burned-area pipeline (see [../classification/README.md](../classification/README.md) and [../filtering/README.md](../filtering/README.md)). Most tools live in this **`validation/`** directory. **Polygonizing** classified rasters (mask pixels → GeoPackages) uses **`filtering/polygonize_mask_parallel.py`** — it is **not** under `validation/`; see [filtering/README.md](../filtering/README.md). **`reproject_raster_to_equal_area.py`** warps GeoTIFFs to the same equal-area CRS as vectors; **`merge_reprojected_tiles_by_year.py`** optionally mosaics regional tiles into one raster per year before polygonize or QA.
+Scripts to validate and prepare reference layers used to evaluate the burned-area pipeline (see [../classification/README.md](../classification/README.md) and [../filtering/README.md](../filtering/README.md)). Most tools live in this **`validation/`** directory. **Polygonizing** classified rasters (mask pixels → GeoPackages) uses **`filtering/polygonize_mask_parallel.py`** — it is **not** under `validation/`; see [filtering/README.md](../filtering/README.md). **`reproject_raster_to_equal_area.py`** warps GeoTIFFs to the same equal-area CRS as vectors; **`merge_reprojected_tiles_by_year.py`** optionally mosaics regional tiles into one raster per year before polygonize or QA. After **`intersect_top_n_scars_with_classified.py`**, run **`calculate_jaccard_index.py`** on each hits GeoPackage to derive **B = unary_union(bᵢ)** and per-scar Jaccard metrics.
 
 ## Contents
 
@@ -12,6 +12,33 @@ Scripts to validate and prepare reference layers used to evaluate the burned-are
 | `split_vector_by_year.py` | Splits a vector layer into one GeoPackage per calendar year (default year column: `Season`). |
 | `plot_area_distribution.py` | Plots the polygon-area distribution (in hectares): log x-axis histogram plus a linear-scale ruler for the same range. |
 | `intersect_top_n_scars_with_classified.py` | Crosses a scar catalog with **polygonized** classified GeoPackages (produced with **`../filtering/polygonize_mask_parallel.py`**). Optional top N / `--by-year`; output: `scar` + `classified_hits` layers. |
+| `calculate_jaccard_index.py` | From a hits GeoPackage (`--hits-gpkg`), one row per scar: **B = unary_union(bᵢ)**, **J = area(A∩B)/area(A∪B)**. Legacy mode: single intersection layer + reference/classified totals. |
+| `spatial_validation_metrics.py` | Singh et al. (2015) closeness **D** per reference–segment pair; scar-level **TP/FP/FN**, commission/omission, Jaccard, Dice. See `requirements-spatial-validation.txt`. |
+
+## Spatial validation (Singh et al. 2015)
+
+### Environment
+
+```bash
+python -m pip install -r validation/requirements-spatial-validation.txt
+```
+
+Requires hits GeoPackages from `intersect_top_n_scars_with_classified.py` (layers `scar` + `classified_hits`).
+
+### `spatial_validation_metrics.py`
+
+**Pairwise** (each reference polygon × each intersecting classified segment): Over/Under-segmentation, **D**, **D_norm** (= 1 − D/√2).
+
+**Scar summary** (union of all segments per scar, optional `--by-region`): TP, FP, FN, commission/omission, Jaccard, Dice, areas (ha), detection percentages; best/mean **D_norm** across pairs.
+
+```bash
+python validation/spatial_validation_metrics.py \
+    --hits-dir "D:/MAPBIOMAS/FUEGO/hits_classified_20260512_by_year" \
+    --hits-pattern "cicatrices_hits_classified_20260512_*.gpkg" \
+    --output-dir "D:/MAPBIOMAS/FUEGO/spatial_metrics_classified_20260512" \
+    --by-region \
+    --aggregate-summary-csv "D:/MAPBIOMAS/FUEGO/spatial_metrics_classified_20260512/summary_by_year_region.csv"
+```
 
 ## Equal-area reprojection (vectors)
 
@@ -120,7 +147,7 @@ python validation/plot_area_distribution.py \
 
 #### Role
 
-Reads one **scar catalog** (`--catalog`) and all classified polygon GeoPackages under `--classified-dir`. For each scar (optionally restricted by `--top-n` and `--area-column`), it keeps classified polygons whose geometry **intersects** the scar and whose **year parsed from the filename** matches the scar’s calendar year. Full classified geometries are preserved (not clipped). The script does **not** build `B = unary_union(bᵢ)`, nor `A ∩ B`, `A ∪ B`, nor spatial indices — those belong in a downstream step (e.g. Jaccard). Parallel execution via `--workers`.
+Reads one **scar catalog** (`--catalog`) and all classified polygon GeoPackages under `--classified-dir`. For each scar (optionally restricted by `--top-n` and `--area-column`), it keeps classified polygons whose geometry **intersects** the scar and whose **year parsed from the filename** matches the scar’s calendar year. Full classified geometries are preserved (not clipped). The script does **not** build `B = unary_union(bᵢ)`, nor `A ∩ B`, `A ∪ B`, nor spatial indices — use **`calculate_jaccard_index.py --hits-gpkg`** as the next step. Parallel execution via `--workers`.
 
 **Run by year:** use **`--by-year`** with **`--output-dir`** (and optional **`--output-stem`**) to write **one GeoPackage per calendar year** present in the catalog (`{stem}_{year}.gpkg`). Each yearly run processes only scars with that `scar_year`. With **`--top-n`**, the *N* largest scars are chosen **within each year** (not globally). Alternatively, **`--year YYYY`** with a single **`--output`** restricts one run to that calendar year only; **`--top-n`** then applies within that year.
 
@@ -224,3 +251,42 @@ python validation/intersect_top_n_scars_with_classified.py \
 ```
 
 Only tiles whose parsed year matches each scar’s `scar_year` are read for that scar.
+
+## Jaccard index (per scar)
+
+### `calculate_jaccard_index.py`
+
+#### Role
+
+Consumes a **hits GeoPackage** written by `intersect_top_n_scars_with_classified.py` (`--hits-gpkg`), reads layers **`scar`** (polygon **A**) and **`classified_hits`** (polygons **bᵢ**). For each `scar_id`, builds **B = unary_union(bᵢ)** over hits with that id, then:
+
+- **intersection_area** = area(**A** ∩ **B**)
+- **union_area** = area(**A**) + area(**B**) − intersection_area (= area(**A** ∪ **B**))
+- **Jaccard** = intersection_area / union_area
+
+If a scar has **no** rows in `classified_hits`, **B** is empty: **J = 0** and union_area equals area(**A**). Output is one CSV row per scar (`scar_id`, optional `scar_year`, areas in m², `jaccard_index`, `jaccard_percent`).
+
+**Legacy mode** (mutually exclusive with `--hits-gpkg`): pass `--intersection` plus `--reference` / `--classified` (or `--reference-area-m2` / `--classified-area-m2`) for a **single** global overlap metric, as when **A** and **B** are each one polygon or pre-aggregated layers.
+
+#### Example (one hits file)
+
+```bash
+python validation/calculate_jaccard_index.py \
+    --hits-gpkg /mnt/e/mapbiomas/fire/validation/cicatrices/hits_20260512_by_year/incendios_hits_20260512_2017.gpkg \
+    --output-csv /mnt/e/mapbiomas/fire/validation/cicatrices/jaccard_2017.csv
+```
+
+#### Example (loop over yearly hits from `--by-year`)
+
+```bash
+out_dir=/mnt/e/mapbiomas/fire/validation/cicatrices/jaccard_20260512
+mkdir -p "$out_dir"
+for f in /mnt/e/mapbiomas/fire/validation/cicatrices/hits_20260512_by_year/*.gpkg; do
+  stem=$(basename "$f" .gpkg)
+  python validation/calculate_jaccard_index.py \
+      --hits-gpkg "$f" \
+      --output-csv "$out_dir/${stem}_jaccard.csv"
+done
+```
+
+Optional: `--scar-layer` / `--classified-hits-layer` if layer names differ from the defaults `scar` and `classified_hits`.

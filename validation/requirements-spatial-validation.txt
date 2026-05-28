@@ -1,0 +1,7 @@
+# Spatial validation metrics (Singh et al. 2015 closeness index D, TP/FP/FN, IoU, Dice)
+# Install: python -m pip install -r validation/requirements-spatial-validation.txt
+geopandas>=0.14
+pandas>=2.0
+numpy>=1.24
+shapely>=2.0
+pyproj>=3.6

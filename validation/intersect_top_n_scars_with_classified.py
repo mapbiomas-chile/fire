@@ -2,8 +2,8 @@
 """Identify classified polygons that intersect each scar; write A and hits as geometries.
 
 This script is intentionally generic: it does NOT compute B = unary_union(b_i),
-A intersect B, A union B, nor any spatial index. Downstream scripts (e.g. Jaccard)
-consume the two output layers and derive B and metrics themselves.
+A intersect B, A union B, nor any spatial index. Downstream ``calculate_jaccard_index.py``
+consumes the two output layers and derives B and per-scar Jaccard metrics.
 
 Use ``--by-year`` to run one output GeoPackage per calendar year (recommended when
 the classified folder holds many years). With ``--top-n``, ranks are **within each
@@ -29,7 +29,8 @@ def parse_args() -> argparse.Namespace:
             "From a fire-scar catalog, optionally pick the N largest scars and find every "
             "classified polygon that intersects each scar (same year). Output is a GeoPackage "
             "with layers 'scar' and 'classified_hits', or one such file per year with "
-            "--by-year. Downstream scripts build B = unary_union(b_i) and compute indices."
+            "--by-year. Use validation/calculate_jaccard_index.py --hits-gpkg on that output "
+            "to build B = unary_union(b_i) and per-scar Jaccard."
         )
     )
     parser.add_argument(
