@@ -34,6 +34,7 @@ def polygonize_one_file(
         crs = src.crs
 
     mask = data == mask_value
+    del data
     if not np.any(mask):
         gdf_empty = gpd.GeoDataFrame(
             {"source_file": [], "mask_value": []},
@@ -45,7 +46,8 @@ def polygonize_one_file(
         gdf_empty.to_file(out_path, driver="GPKG")
         return str(out_path), 0
 
-    raster_for_shapes = np.where(mask, 1, 0).astype(np.uint8)
+    # Avoid np.where(..., 1, 0): it promotes to int64 and can OOM large tiles.
+    raster_for_shapes = mask.astype(np.uint8, copy=False)
 
     geoms = []
     values = []

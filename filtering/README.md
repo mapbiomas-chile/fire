@@ -2,6 +2,18 @@
 
 Utilities that run after the burned-area classifier (see [../classification/README.md](../classification/README.md)). The goal of this stage is to turn raw classified rasters into clean, analysis-ready products: per-year masks of non-burnable classes, filtered rasters, polygonized fire scars and summary statistics used to pick filtering thresholds.
 
+## Cluster execution (NLHPC, class masks + raster filter only)
+
+Same pattern as [`../classification/run_classify_fire_model_slurm_v2.sh`](../classification/run_classify_fire_model_slurm_v2.sh): NLHPC `main`, Python absoluto `mb_fuego`, verificaciones de rutas/paquetes, logs en `/home/%u/logs/`.
+
+```bash
+sbatch /home/flepin/fire/filtering/run_filtering_pipeline_slurm.sh
+```
+
+Optional args: `CLASSIFIED_DIR` `WORK_ROOT` `STEPS` (defaults: `/home/flepin/classi_v2`, `/home/flepin/filtering_work`, `all`). Edit `LULC_STACK` at the top of the SLURM script if needed.
+
+`run_filtering_pipeline.sh` holds the pipeline logic; **submit** `run_filtering_pipeline_slurm.sh` on NLHPC. Does not polygonize or apply area thresholds.
+
 ## Suggested pipeline
 
 A typical post-classification run chains these steps:
