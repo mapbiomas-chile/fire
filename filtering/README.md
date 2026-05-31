@@ -2,17 +2,30 @@
 
 Utilities that run after the burned-area classifier (see [../classification/README.md](../classification/README.md)). The goal of this stage is to turn raw classified rasters into clean, analysis-ready products: per-year masks of non-burnable classes, filtered rasters, polygonized fire scars and summary statistics used to pick filtering thresholds.
 
-## Cluster execution (NLHPC, class masks + raster filter only)
+## Cluster execution (NLHPC, class masks + raster filter)
 
-Same pattern as [`../classification/run_classify_fire_model_slurm_v2.sh`](../classification/run_classify_fire_model_slurm_v2.sh): NLHPC `main`, Python absoluto `mb_fuego`, verificaciones de rutas/paquetes, logs en `/home/%u/logs/`.
+Same pattern as [`../classification/run_classify_fire_model_slurm_v2.sh`](../classification/run_classify_fire_model_slurm_v2.sh).
+
+**LULC from GEE tiles** (e.g. `lulc_chile_collection02_2013*.tif` × 3 per year):
 
 ```bash
-sbatch /home/flepin/fire/filtering/run_filtering_pipeline_slurm.sh
+# Default LULC_DIR=/home/flepin/lulc_collection02
+sbatch filtering/run_filtering_pipeline_slurm.sh
 ```
 
-Optional args: `CLASSIFIED_DIR` `WORK_ROOT` `STEPS` (defaults: `/home/flepin/classi_v2`, `/home/flepin/filtering_work`, `all`). Edit `LULC_STACK` at the top of the SLURM script if needed.
+Pipeline steps when `LULC_DIR` is set:
 
-`run_filtering_pipeline.sh` holds the pipeline logic; **submit** `run_filtering_pipeline_slurm.sh` on NLHPC. Does not polygonize or apply area thresholds.
+1. `mosaic_gee_lulc_tiles.py` → `{WORK_ROOT}/lulc_mosaics/lulc_{year}.tif`
+2. Accumulated + yearly class masks → `{WORK_ROOT}/mascaras/`
+3. `filter_classified_parallel.py` → `{WORK_ROOT}/classified_filtered/`
+
+Optional args: `CLASSIFIED_DIR` `WORK_ROOT` `STEPS`. Example — masks already built:
+
+```bash
+sbatch filtering/run_filtering_pipeline_slurm.sh /home/flepin/classi_v2 /home/flepin/filtering_work filter
+```
+
+**Legacy:** set `LULC_STACK` to a multi-band file and leave `LULC_DIR` empty to skip the mosaic step.
 
 ## Suggested pipeline
 
@@ -30,11 +43,14 @@ Auxiliary scripts (GEE downloads, tile listing, and metadata inspection) support
 
 ## Mask building
 
+### `mosaic_gee_lulc_tiles.py`
+When LULC was exported from GEE as several tiles per year (`lulc_chile_collection02_20130000000000-0000000000.tif`, …), merges all tiles sharing the same calendar year into `{output_dir}/lulc_{year}.tif`. Used automatically when `LULC_DIR` is set in `run_filtering_pipeline.sh`.
+
 ### `create_accumulated_class_masks.py`
-For a selected land-cover class, produces one accumulated mask by OR-ing the class across all bands (years) of the input raster. The hard-coded `CLASS_SPECS` list covers rocky outcrop (`29`), sand/beach/dune (`23`), salt flat (`61`), ice/snow (`34`) and other non-vegetated areas (`25`), each written to a fixed `mascara_<name>_acumulado.tif` filename.
+OR across years for static classes (rock, sand, salt flat, ice, bare). Input: `--input-tif` (multi-band stack) or `--yearly-dir` with `lulc_{year}.tif` mosaics.
 
 ### `create_yearly_masks.py`
-Writes one binary mask per year for each of these MapBiomas-style classes (read from the corresponding band of the input multi-year stack): river/lake **rio_lago** (`33`), **infraestructura** (`24`), **agricultura** (`15`) and **pastura** (`18`). Outputs use the filenames expected by `create_total_masks_by_year.py` (`mascara_<class>_<year>.tif`). Parallelizes by calendar year with `--workers` (one process per year by default: `cpu_count - 1`).
+Per-year masks for **rio_lago** (33), **infraestructura** (24), **agricultura** (15), **pastura** (18). Same input modes as accumulated masks.
 
 ### `create_total_masks_by_year.py`
 Combines all accumulated masks from `create_accumulated_class_masks.py` with the yearly thematic masks from `create_yearly_masks.py` (río/lago, infraestructura, agricultura, pastura) into one `mascara_total_<year>.tif` per year. The output is consumed by `filter_classified_parallel.py`. For a split directory tree, use `--mascaras-root` (`acumuladas/`, `by_year/`, `totales/`) and `--workers` to parallelize by year.
