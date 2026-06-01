@@ -78,6 +78,10 @@ mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL
 cd "${REPO_ROOT}"
 
 log "REPO_ROOT=${REPO_ROOT}"
+if [[ "${LULC_STACK}" == *.vrt || "${LULC_STACK}" == *.VRT ]]; then
+  echo "ERROR: LULC_STACK must be a single GeoTIFF (.tif), not VRT: ${LULC_STACK}" >&2
+  exit 1
+fi
 log "LULC_STACK=${LULC_STACK} (band 1 = ${START_YEAR_BAND1})"
 log "CLASSIFIED_DIR=${CLASSIFIED_DIR}"
 log "WORK_ROOT=${WORK_ROOT}"

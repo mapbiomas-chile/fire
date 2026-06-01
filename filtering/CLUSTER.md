@@ -34,25 +34,23 @@ python -c "import numpy, rasterio; print('OK')"
 
 ### 3.1 Stack LULC multibanda (`LULC_STACK`)
 
-Un solo raster con **una banda por año** (MapBiomas collection02).
+**Un solo archivo GeoTIFF** (`.tif`), no `.vrt`: una banda por año (MapBiomas collection02).
 
 | Parámetro | Valor típico |
 |-----------|----------------|
-| Archivo | `/home/flepin/lulc_collection02/vrt/lulc_chile_collection02_1999_2025.vrt` |
+| Archivo | `/home/flepin/lulc_collection02/lulc_chile_collection02_1999_2025.tif` |
 | Año banda 1 | `1999` (`START_YEAR_BAND1`) |
 | Años usados en máscaras | `2013`–`2025` (`FROM_YEAR` / `TO_YEAR`) |
 
-**Importante:** si aparece `Writing through VRTSourcedRasterBand is not supported`, materializa el stack a GeoTIFF (una vez):
+Si solo tienes un `.vrt`, conviértelo una vez a GeoTIFF y apunta `LULC_STACK` al `.tif`:
 
 ```bash
 gdal_translate -co COMPRESS=DEFLATE -co TILED=YES \
-  /home/flepin/lulc_collection02/vrt/lulc_chile_collection02_1999_2025.vrt \
+  /ruta/al/stack.vrt \
   /home/flepin/lulc_collection02/lulc_chile_collection02_1999_2025.tif
 ```
 
-Luego en `cluster_paths.env` apunta `LULC_STACK` al `.tif`.
-
-*(Teselas GEE sueltas en `lulc_collection02/` no se usan en esta rama sin un script de mosaico; hace falta el stack multibanda o un GeoTIFF equivalente.)*
+*(Teselas GEE sueltas en `lulc_collection02/` no las usa este pipeline; hace falta el stack multibanda en un único `.tif`.)*
 
 ### 3.2 Clasificados de fuego (`CLASSIFIED_DIR`)
 
@@ -119,7 +117,7 @@ Logs: `~/logs/fire_class_filter_<JOBID>.out` / `.err`
 
 - [ ] `~/fire` en rama `feat/filtering_pipeline`
 - [ ] `filtering/cluster_paths.env` creado desde `.example`
-- [ ] `LULC_STACK` existe (preferible `.tif`, no solo VRT)
+- [ ] `LULC_STACK` existe y es un **GeoTIFF** (`.tif`), no `.vrt`
 - [ ] `CLASSIFIED_DIR` con GeoTIFFs
 - [ ] `mb_fuego` con rasterio
 - [ ] `~/logs` existe o SLURM lo crea
