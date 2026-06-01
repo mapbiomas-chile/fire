@@ -9,7 +9,8 @@
 # Opcional: filtering/cluster_paths.env sobreescribe las rutas por defecto.
 # Cola SLURM: sbatch filtering/run_filtering_pipeline_slurm.sh
 #
-# STEPS: masks_accumulated | masks_yearly | masks_total | filter | temporal_first_burn | all
+# STEPS (all): masks_accumulated, masks_yearly, masks_total, filter, temporal_first_burn
+#   temporal_first_burn reads classified_filtered/ → classified_first_burn/
 # =============================================================================
 
 set -euo pipefail
@@ -35,6 +36,9 @@ TOTAL_MASKS_DIR="${TOTAL_MASKS_DIR:-${MASCARAS_ROOT}/totales}"
 FILTERED_DIR="${FILTERED_DIR:-${WORK_ROOT}/classified_filtered}"
 FIRST_BURN_DIR="${FIRST_BURN_DIR:-${WORK_ROOT}/classified_first_burn}"
 TEMPORAL_SUFFIX="${TEMPORAL_SUFFIX:-_first_burn_year}"
+TEMPORAL_SPATIAL_MERGE="${TEMPORAL_SPATIAL_MERGE:-1}"
+TEMPORAL_CONNECTIVITY="${TEMPORAL_CONNECTIVITY:-8}"
+TEMPORAL_NAME_CONTAINS="${TEMPORAL_NAME_CONTAINS:-141228}"
 
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
@@ -45,8 +49,7 @@ WORKERS="${WORKERS:-4}"
 FILL_VALUE="${FILL_VALUE:-0}"
 STEPS="${STEPS:-all}"
 
-DEFAULT_STEPS="masks_accumulated,masks_yearly,masks_total,filter"
-# Optional: export STEPS="...,temporal_first_burn" or STEPS=all,temporal_first_burn
+DEFAULT_STEPS="masks_accumulated,masks_yearly,masks_total,filter,temporal_first_burn"
 
 log() { echo "[$(date -Iseconds)] $*"; }
 
@@ -74,7 +77,7 @@ if [[ ! -d "${CLASSIFIED_DIR}" ]]; then
   exit 1
 fi
 
-mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL_MASKS_DIR}" "${FILTERED_DIR}"
+mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL_MASKS_DIR}" "${FILTERED_DIR}" "${FIRST_BURN_DIR}"
 cd "${REPO_ROOT}"
 
 log "REPO_ROOT=${REPO_ROOT}"
@@ -140,17 +143,35 @@ if step_enabled "filter"; then
 fi
 
 if step_enabled "temporal_first_burn"; then
-  log "=== Step 3: first burn year only (remove multi-year persistence) ==="
+  log "=== Step 3: temporal scar dedup (first burn year + spatial merge) ==="
   TEMPORAL_INPUT="${TEMPORAL_INPUT_DIR:-${FILTERED_DIR}}"
-  run_py filtering/filter_temporal_first_burn_year.py \
-    --input-dir "${TEMPORAL_INPUT}" \
-    --output-dir "${FIRST_BURN_DIR}" \
-    --from-year "${FROM_YEAR}" \
-    --to-year "${TO_YEAR}" \
-    --fill-value "${FILL_VALUE}" \
-    --workers "${WORKERS}" \
-    --suffix "${TEMPORAL_SUFFIX}" \
+  if [[ ! -d "${TEMPORAL_INPUT}" ]]; then
+    echo "ERROR: Temporal input dir not found (run filter first): ${TEMPORAL_INPUT}" >&2
+    exit 1
+  fi
+  TEMPORAL_ARGS=(
+    --input-dir "${TEMPORAL_INPUT}"
+    --output-dir "${FIRST_BURN_DIR}"
+    --from-year "${FROM_YEAR}"
+    --to-year "${TO_YEAR}"
+    --fill-value "${FILL_VALUE}"
+    --workers "${WORKERS}"
+    --suffix "${TEMPORAL_SUFFIX}"
+    --connectivity "${TEMPORAL_CONNECTIVITY}"
     --stats-json "${WORK_ROOT}/logs/temporal_first_burn_stats.json"
+  )
+  if [[ "${TEMPORAL_SPATIAL_MERGE}" == "1" ]]; then
+    TEMPORAL_ARGS+=(--spatial-merge)
+  else
+    TEMPORAL_ARGS+=(--no-spatial-merge)
+  fi
+  if [[ -n "${TEMPORAL_NAME_CONTAINS}" ]]; then
+    TEMPORAL_ARGS+=(--name-contains "${TEMPORAL_NAME_CONTAINS}")
+  fi
+  log "Temporal input:  ${TEMPORAL_INPUT}"
+  log "Name filter:     ${TEMPORAL_NAME_CONTAINS:-<all tiles>}"
+  log "Temporal output: ${FIRST_BURN_DIR}"
+  run_py filtering/filter_temporal_first_burn_year.py "${TEMPORAL_ARGS[@]}"
 fi
 
 log "=== Pipeline finished ==="

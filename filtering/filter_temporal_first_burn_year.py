@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Keep burned pixels only in the first calendar year they appear (per tile).
+Temporal deduplication of burned-area rasters (per spatial tile).
 
-Example: if the same pixel is classified as burned in 2017, 2018 and 2019,
-only 2017 keeps the burn; 2018 and 2019 are set to the background value.
+For each pixel location, assigns burns to the first calendar year of detection.
+Later years lose duplicate pixels at the same cell. Optionally (--spatial-merge,
+default) pixels that are newly burned only in year Y but 8-connected to an existing
+scar from an earlier year are merged into that origin year (e.g. Jan 2018 extent
+connected to Dec 2017 fire → attributed to 2017).
 
-Tiles are grouped by filename with the year token replaced (same spatial tile,
-different years). Process years in order from --from-year to --to-year.
+Input: output of filter_classified_parallel.py (e.g. classified_filtered/).
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ import numpy as np
 import rasterio
 
 YEAR_RE = re.compile(r"(20\d{2})")
+_ORIGIN_NONE = np.uint16(0)
+_ORIGIN_INF = np.uint32(65535)
 
 
 def extract_year(path: Path) -> int:
@@ -32,7 +36,6 @@ def extract_year(path: Path) -> int:
 
 
 def tile_key(path: Path) -> str:
-    """Group key: stem with the first 20xx replaced by a placeholder."""
     return YEAR_RE.sub("{YEAR}", path.stem, count=1)
 
 
@@ -41,6 +44,75 @@ def is_burned(data: np.ndarray, nodata: float | None) -> np.ndarray:
     if nodata is not None and not (isinstance(nodata, float) and np.isnan(nodata)):
         burned &= data != nodata
     return burned
+
+
+def min_neighbor_origin(origin_year: np.ndarray, connectivity: int) -> np.ndarray:
+    """Per-pixel minimum origin year among neighbors (65535 where no neighbor assigned)."""
+    padded = np.pad(origin_year.astype(np.uint32), 1, constant_values=_ORIGIN_INF)
+    h, w = origin_year.shape
+    neighbors = []
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            if connectivity == 4 and dy != 0 and dx != 0:
+                continue
+            sl = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            neighbors.append(sl)
+    return np.min(np.stack(neighbors, axis=0), axis=0)
+
+
+def assign_origin_year_tile(
+    originals: dict[int, np.ndarray],
+    nodata_by_year: dict[int, float | None],
+    years: list[int],
+    spatial_merge: bool,
+    connectivity: int,
+) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    """
+    Returns (origin_year grid, value grid, stats).
+    value grid holds the burn value written for the assigned origin year.
+    """
+    shape = next(iter(originals.values())).shape
+    origin_year = np.zeros(shape, dtype=np.uint16)
+    value_grid = np.zeros(shape, dtype=next(iter(originals.values())).dtype)
+
+    stats = {
+        "pixels_same_cell_removed": 0,
+        "pixels_spatial_merged_to_earlier_year": 0,
+        "pixels_new_events": 0,
+    }
+
+    for year in years:
+        data = originals[year]
+        burned = is_burned(data, nodata_by_year[year])
+
+        same_cell = burned & (origin_year > _ORIGIN_NONE)
+        stats["pixels_same_cell_removed"] += int(same_cell.sum())
+
+        new_only = burned & (origin_year == _ORIGIN_NONE)
+
+        if spatial_merge and np.any(origin_year > _ORIGIN_NONE) and np.any(new_only):
+            labeled = np.where(
+                origin_year > _ORIGIN_NONE,
+                origin_year.astype(np.uint32),
+                _ORIGIN_INF,
+            )
+            min_orig = min_neighbor_origin(origin_year, connectivity)
+            merge = new_only & (min_orig < _ORIGIN_INF)
+            if np.any(merge):
+                merged_origins = min_orig[merge].astype(np.uint16)
+                origin_year[merge] = merged_origins
+                value_grid[merge] = data[merge]
+                stats["pixels_spatial_merged_to_earlier_year"] += int(merge.sum())
+                new_only &= ~merge
+
+        if np.any(new_only):
+            origin_year[new_only] = np.uint16(year)
+            value_grid[new_only] = data[new_only]
+            stats["pixels_new_events"] += int(new_only.sum())
+
+    return origin_year, value_grid, stats
 
 
 def process_tile_group(args: tuple) -> dict:
@@ -53,15 +125,17 @@ def process_tile_group(args: tuple) -> dict:
         fill_value,
         target_band,
         suffix,
+        spatial_merge,
+        connectivity,
     ) = args
 
     years = sorted(y for y in year_to_path if from_year <= y <= to_year)
     if not years:
         return {"tile": key, "skipped": True, "reason": "no years in range"}
 
-    first_year_grid: np.ndarray | None = None
     profiles: dict[int, dict] = {}
     originals: dict[int, np.ndarray] = {}
+    nodata_by_year: dict[int, float | None] = {}
 
     for year in years:
         path = year_to_path[year]
@@ -70,55 +144,65 @@ def process_tile_group(args: tuple) -> dict:
             profile = src.profile.copy()
             nodata = src.nodata
 
-        if first_year_grid is None:
-            first_year_grid = np.zeros(data.shape, dtype=np.uint16)
-        elif data.shape != first_year_grid.shape:
-            raise ValueError(
-                f"Shape mismatch for tile {key}: {path.name} {data.shape} "
-                f"vs {first_year_grid.shape}"
-            )
+        if originals and data.shape != next(iter(originals.values())).shape:
+            raise ValueError(f"Shape mismatch in tile {key}: {path.name}")
 
         profiles[year] = profile
         originals[year] = data
-        burned = is_burned(data, nodata)
-        newly = burned & (first_year_grid == 0)
-        first_year_grid[newly] = year
+        nodata_by_year[year] = nodata
 
-    assert first_year_grid is not None
+    origin_year, value_grid, assign_stats = assign_origin_year_tile(
+        originals,
+        nodata_by_year,
+        years,
+        spatial_merge=spatial_merge,
+        connectivity=connectivity,
+    )
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     stats: dict = {
         "tile": key,
         "years": years,
-        "pixels_removed_by_year": {},
+        "spatial_merge": spatial_merge,
+        "assign": assign_stats,
+        "pixels_written_by_year": {},
         "output_files": [],
     }
 
     for year in years:
-        data = originals[year]
-        keep = first_year_grid == year
-        out = np.where(keep, data, fill_value).astype(data.dtype)
-        burned = is_burned(data, profile.get("nodata"))
-        removed = int((burned & ~keep).sum())
+        keep = origin_year == year
+        out = np.full(originals[year].shape, fill_value, dtype=originals[year].dtype)
+        out[keep] = value_grid[keep]
+
+        burned_before = is_burned(originals[year], nodata_by_year[year])
+        stats["pixels_written_by_year"][year] = int(keep.sum())
+        stats.setdefault("pixels_removed_by_year", {})[year] = int(
+            (burned_before & ~keep).sum()
+        )
 
         profile = profiles[year]
         profile.update(count=1, compress="deflate", predictor=2, tiled=True)
 
-        out_name = f"{year_to_path[year].stem}{suffix}.tif"
-        out_path = output_dir / out_name
+        out_path = output_dir / f"{year_to_path[year].stem}{suffix}.tif"
         with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(out, 1)
-
-        stats["pixels_removed_by_year"][year] = removed
         stats["output_files"].append(str(out_path))
 
     return stats
 
 
-def group_inputs(input_dir: Path, from_year: int, to_year: int) -> dict[str, dict[int, Path]]:
+def group_inputs(
+    input_dir: Path,
+    from_year: int,
+    to_year: int,
+    name_contains: str | None = None,
+) -> dict[str, dict[int, Path]]:
     groups: dict[str, dict[int, Path]] = defaultdict(dict)
     for path in sorted(input_dir.glob("*.tif")):
+        if name_contains and name_contains not in path.name:
+            continue
         try:
             year = extract_year(path)
         except ValueError:
@@ -132,41 +216,43 @@ def group_inputs(input_dir: Path, from_year: int, to_year: int) -> dict[str, dic
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Assign each burned pixel to its first year of detection only "
-            "(removes persistence in later years)."
+            "First burn year per scar with optional spatial merge of new pixels "
+            "connected to an earlier-year footprint (persistence filter)."
         )
     )
-    parser.add_argument("--input-dir", required=True, help="Folder with per-year classified GeoTIFFs.")
-    parser.add_argument("--output-dir", required=True, help="Where to write deduplicated rasters.")
-    parser.add_argument("--from-year", type=int, default=2013, help="First year in the series (default: 2013).")
     parser.add_argument(
-        "--to-year",
+        "--input-dir",
+        required=True,
+        help="Folder with LULC-filtered classified GeoTIFFs (e.g. classified_filtered/).",
+    )
+    parser.add_argument("--output-dir", required=True, help="Output folder for deduplicated rasters.")
+    parser.add_argument("--from-year", type=int, default=2013)
+    parser.add_argument("--to-year", type=int, default=2025)
+    parser.add_argument("--fill-value", type=float, default=0)
+    parser.add_argument("--target-band", type=int, default=1)
+    parser.add_argument("--suffix", default="_first_burn_year")
+    parser.add_argument("--workers", type=int, default=max(1, cpu_count() - 1))
+    parser.add_argument("--stats-json", default=None)
+    parser.add_argument(
+        "--spatial-merge",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Merge new burns in year Y into the earliest neighboring origin year "
+            "when 8-connected to an existing scar (default: on)."
+        ),
+    )
+    parser.add_argument(
+        "--connectivity",
         type=int,
-        default=2025,
-        help="Last year in the series, inclusive (default: 2025).",
+        choices=(4, 8),
+        default=8,
+        help="Neighbor connectivity for spatial merge (default: 8).",
     )
     parser.add_argument(
-        "--fill-value",
-        type=float,
-        default=0,
-        help="Value for pixels burned in a later year but first seen earlier (default: 0).",
-    )
-    parser.add_argument("--target-band", type=int, default=1, help="Band to read (1-based, default: 1).")
-    parser.add_argument(
-        "--suffix",
-        default="_first_burn_year",
-        help="Inserted before .tif in output names (default: _first_burn_year).",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=max(1, cpu_count() - 1),
-        help="Parallel workers (one spatial tile per task).",
-    )
-    parser.add_argument(
-        "--stats-json",
+        "--name-contains",
         default=None,
-        help="Optional path to write aggregate JSON stats.",
+        help="Only process files whose name includes this substring (e.g. 141228).",
     )
     args = parser.parse_args()
 
@@ -177,9 +263,14 @@ def main() -> int:
     if args.from_year > args.to_year:
         raise ValueError("--from-year must be <= --to-year")
 
-    groups = group_inputs(input_dir, args.from_year, args.to_year)
+    groups = group_inputs(
+        input_dir, args.from_year, args.to_year, name_contains=args.name_contains
+    )
     if not groups:
-        raise RuntimeError(f"No .tif files with years {args.from_year}-{args.to_year} in {input_dir}")
+        msg = f"No .tif files with years {args.from_year}-{args.to_year} in {input_dir}"
+        if args.name_contains:
+            msg += f" matching --name-contains {args.name_contains!r}"
+        raise RuntimeError(msg)
 
     tasks = [
         (
@@ -191,13 +282,18 @@ def main() -> int:
             args.fill_value,
             args.target_band,
             args.suffix,
+            args.spatial_merge,
+            args.connectivity,
         )
         for key, year_to_path in groups.items()
     ]
 
     workers = min(args.workers, len(tasks))
     print(f"[INFO] Tile groups: {len(tasks)}")
+    if args.name_contains:
+        print(f"[INFO] Name filter: contains {args.name_contains!r}")
     print(f"[INFO] Years: {args.from_year}-{args.to_year}")
+    print(f"[INFO] Spatial merge: {args.spatial_merge} (connectivity={args.connectivity})")
     print(f"[INFO] Workers: {workers}")
 
     all_stats: list[dict] = []
@@ -207,9 +303,13 @@ def main() -> int:
                 print(f"[WARN] Skipped {stats['tile']}: {stats.get('reason')}")
                 continue
             all_stats.append(stats)
-            removed = stats["pixels_removed_by_year"]
-            total_removed = sum(removed.values())
-            print(f"[INFO] {stats['tile']}: removed {total_removed} pixel-years total")
+            a = stats["assign"]
+            print(
+                f"[INFO] {stats['tile']}: "
+                f"same_cell={a['pixels_same_cell_removed']} "
+                f"spatial_merge={a['pixels_spatial_merged_to_earlier_year']} "
+                f"new_events={a['pixels_new_events']}"
+            )
 
     if args.stats_json:
         out = Path(args.stats_json)
@@ -219,6 +319,8 @@ def main() -> int:
                 {
                     "from_year": args.from_year,
                     "to_year": args.to_year,
+                    "spatial_merge": args.spatial_merge,
+                    "connectivity": args.connectivity,
                     "n_tiles": len(all_stats),
                     "tiles": all_stats,
                 },
