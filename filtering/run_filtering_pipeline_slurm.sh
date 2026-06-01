@@ -44,8 +44,6 @@ STEPS="${3:-all}"
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
 WORKERS=22
-# One year per process; parallel mosaic OOMs easily at 64GB with many workers.
-MOSAIC_WORKERS="${MOSAIC_WORKERS:-1}"
 
 # =====================================================
 # VERIFICACIONES INICIALES
@@ -62,8 +60,7 @@ echo "Clasificados entrada: $CLASSIFIED_DIR"
 echo "Directorio trabajo:   $WORK_ROOT"
 echo "Pasos (STEPS):        $STEPS"
 echo "Años:                 ${FROM_YEAR}-${TO_YEAR}"
-echo "Workers (masks/filter): $WORKERS"
-echo "Workers (LULC mosaic):  $MOSAIC_WORKERS"
+echo "Workers:              $WORKERS"
 echo "============================================="
 
 if [ ! -e "$PYTHON_ENV" ]; then
@@ -127,7 +124,7 @@ echo "============================================="
 export REPO_ROOT="${FIRE_REPO}"
 export PYTHON="${PYTHON_ENV}"
 export LULC_DIR LULC_TILE_PATTERN CLASSIFIED_DIR WORK_ROOT FROM_YEAR TO_YEAR
-export WORKERS MOSAIC_WORKERS STEPS
+export WORKERS STEPS
 
 cd "${FIRE_REPO}"
 bash "$PIPELINE_SCRIPT"
