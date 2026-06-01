@@ -36,6 +36,16 @@ Combines all accumulated masks from `create_accumulated_class_masks.py` with the
 ### `filter_classified_parallel.py`
 Applies a year-specific binary mask (`1` = remove, `0` = keep) to every classified GeoTIFF in a directory. The script extracts the year from each tile's name with the regex `20\d{2}`, selects the matching yearly mask, reprojects if needed and writes filtered tiles plus a per-file JSON report. Parallelized across cores with `multiprocessing.Pool`.
 
+### `filter_temporal_first_burn_year.py`
+Removes **persistence** across years: if a pixel is burned in 2017, 2018 and 2019, only **2017** keeps the burn (same spatial tile, years processed from `--from-year`). Grouping is by filename with the year token replaced. Run **after** LULC / class filtering.
+
+```bash
+python filtering/filter_temporal_first_burn_year.py \
+  --input-dir /home/flepin/filtering_work_local/classified_filtered \
+  --output-dir /home/flepin/filtering_work_local/classified_first_burn \
+  --from-year 2013 --to-year 2025 --workers 4
+```
+
 ### `polygonize_mask_parallel.py`
 Converts the burned-area pixels (`mask value = 1` by default) of each filtered raster into polygons via `rasterio.features.shapes`, writing one GeoPackage per input. Connected mask pixels become connected polygons. Runs in parallel using `ProcessPoolExecutor`.
 

@@ -9,7 +9,7 @@
 # Opcional: filtering/cluster_paths.env sobreescribe las rutas por defecto.
 # Cola SLURM: sbatch filtering/run_filtering_pipeline_slurm.sh
 #
-# STEPS: masks_accumulated | masks_yearly | masks_total | filter | all
+# STEPS: masks_accumulated | masks_yearly | masks_total | filter | temporal_first_burn | all
 # =============================================================================
 
 set -euo pipefail
@@ -33,6 +33,8 @@ ACCUMULATED_DIR="${ACCUMULATED_DIR:-${MASCARAS_ROOT}/acumuladas}"
 YEARLY_MASKS_DIR="${YEARLY_MASKS_DIR:-${MASCARAS_ROOT}/by_year}"
 TOTAL_MASKS_DIR="${TOTAL_MASKS_DIR:-${MASCARAS_ROOT}/totales}"
 FILTERED_DIR="${FILTERED_DIR:-${WORK_ROOT}/classified_filtered}"
+FIRST_BURN_DIR="${FIRST_BURN_DIR:-${WORK_ROOT}/classified_first_burn}"
+TEMPORAL_SUFFIX="${TEMPORAL_SUFFIX:-_first_burn_year}"
 
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
@@ -44,6 +46,7 @@ FILL_VALUE="${FILL_VALUE:-0}"
 STEPS="${STEPS:-all}"
 
 DEFAULT_STEPS="masks_accumulated,masks_yearly,masks_total,filter"
+# Optional: export STEPS="...,temporal_first_burn" or STEPS=all,temporal_first_burn
 
 log() { echo "[$(date -Iseconds)] $*"; }
 
@@ -136,8 +139,25 @@ if step_enabled "filter"; then
     --fill-value "${FILL_VALUE}"
 fi
 
+if step_enabled "temporal_first_burn"; then
+  log "=== Step 3: first burn year only (remove multi-year persistence) ==="
+  TEMPORAL_INPUT="${TEMPORAL_INPUT_DIR:-${FILTERED_DIR}}"
+  run_py filtering/filter_temporal_first_burn_year.py \
+    --input-dir "${TEMPORAL_INPUT}" \
+    --output-dir "${FIRST_BURN_DIR}" \
+    --from-year "${FROM_YEAR}" \
+    --to-year "${TO_YEAR}" \
+    --fill-value "${FILL_VALUE}" \
+    --workers "${WORKERS}" \
+    --suffix "${TEMPORAL_SUFFIX}" \
+    --stats-json "${WORK_ROOT}/logs/temporal_first_burn_stats.json"
+fi
+
 log "=== Pipeline finished ==="
 log "Accumulated masks: ${ACCUMULATED_DIR}"
 log "Yearly masks:      ${YEARLY_MASKS_DIR}"
 log "Total masks:       ${TOTAL_MASKS_DIR}/mascara_total_<year>.tif"
 log "Filtered rasters:  ${FILTERED_DIR}"
+if step_enabled "temporal_first_burn"; then
+  log "First-burn year:   ${FIRST_BURN_DIR}"
+fi
