@@ -16,19 +16,12 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import sys
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import rasterio
 from rasterio.merge import merge
-
-_FILTERING_DIR = Path(__file__).resolve().parent
-if str(_FILTERING_DIR) not in sys.path:
-    sys.path.insert(0, str(_FILTERING_DIR))
-
-from gtiff_io import mask_gtiff_profile
 
 YEAR_RE = re.compile(r"collection02[_-](\d{4})|_(\d{4})\d{8}-")
 
@@ -87,17 +80,17 @@ def mosaic_one_year(
     datasets = [rasterio.open(p) for p in tile_paths]
     try:
         mosaic, transform = merge(datasets)
-        ref_profile = datasets[0].profile.copy()
-        ref_profile.update(
+        profile = datasets[0].profile.copy()
+        profile.update(
             height=mosaic.shape[1],
             width=mosaic.shape[2],
             transform=transform,
-            dtype=ref_profile.get("dtype", mosaic.dtype),
+            count=1,
+            compress="deflate",
+            predictor=2,
+            tiled=True,
         )
-        profile = mask_gtiff_profile(ref_profile)
-        profile["dtype"] = ref_profile["dtype"]
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path.unlink(missing_ok=True)
         with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(mosaic[0], 1)
     finally:
