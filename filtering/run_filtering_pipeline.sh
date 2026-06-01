@@ -35,7 +35,9 @@ FILTERED_DIR="${FILTERED_DIR:-${WORK_ROOT}/classified_filtered}"
 
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
+LULC_TO_YEAR="${LULC_TO_YEAR:-${TO_YEAR}}"
 START_YEAR_BAND1="${START_YEAR_BAND1:-1999}"
+COPY_MASK_2025_FROM_2024="${COPY_MASK_2025_FROM_2024:-0}"
 WORKERS="${WORKERS:-16}"
 FILL_VALUE="${FILL_VALUE:-0}"
 STEPS="${STEPS:-all}"
@@ -86,6 +88,7 @@ log "LULC_STACK=${LULC_STACK} (band 1 = ${START_YEAR_BAND1})"
 log "CLASSIFIED_DIR=${CLASSIFIED_DIR}"
 log "WORK_ROOT=${WORK_ROOT}"
 log "STEPS=${STEPS}"
+log "LULC mask years: ${FROM_YEAR}-${LULC_TO_YEAR} | Filter/classified years: ${FROM_YEAR}-${TO_YEAR}"
 
 if step_enabled "masks_accumulated"; then
   log "=== Step 1a: accumulated class masks ==="
@@ -101,8 +104,22 @@ if step_enabled "masks_yearly"; then
     --output-dir "${YEARLY_MASKS_DIR}" \
     --start-year-in-band-1 "${START_YEAR_BAND1}" \
     --from-year "${FROM_YEAR}" \
-    --to-year "${TO_YEAR}" \
+    --to-year "${LULC_TO_YEAR}" \
     --workers "${WORKERS}"
+fi
+
+if [[ "${COPY_MASK_2025_FROM_2024}" == "1" ]] && step_enabled "masks_yearly"; then
+  log "=== Copy 2024 yearly masks → 2025 (LULC sin banda 2025) ==="
+  for stem in rio_lago infraestructura agricultura pastura; do
+    src="${YEARLY_MASKS_DIR}/mascara_${stem}_2024.tif"
+    dst="${YEARLY_MASKS_DIR}/mascara_${stem}_2025.tif"
+    if [[ ! -f "${src}" ]]; then
+      echo "ERROR: Missing ${src}" >&2
+      exit 1
+    fi
+    cp -f "${src}" "${dst}"
+    log "Copied: $(basename "${dst}")"
+  done
 fi
 
 if step_enabled "masks_total"; then
