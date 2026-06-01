@@ -11,12 +11,12 @@
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 
-# Filtrado por clases MapBiomas. LULC desde teselas GEE (collection02).
+# Post-classification filtering by land-cover class masks (all years / regions
+# in CLASSIFIED_DIR). Stops before polygonize and area thresholding.
 #
-#   sbatch filtering/run_filtering_pipeline_slurm.sh
-#
-# Solo filtrar (máscaras ya generadas):
-#   sbatch filtering/run_filtering_pipeline_slurm.sh /home/flepin/classi_v2 /home/flepin/filtering_work filter
+# Optional positional args:
+#   sbatch run_filtering_pipeline_slurm.sh [CLASSIFIED_DIR] [WORK_ROOT] [STEPS]
+#   STEPS: all | masks_accumulated,masks_yearly,masks_total,filter | filter
 
 # =====================================================
 # CONFIGURACIÓN DE THREADS
@@ -33,16 +33,14 @@ PYTHON_ENV="/home/flepin/.conda/envs/mb_fuego/bin/python"
 FIRE_REPO="/home/flepin/fire"
 PIPELINE_SCRIPT="${FIRE_REPO}/filtering/run_filtering_pipeline.sh"
 
-# Teselas LULC exportadas desde GEE (3 archivos por año)
-LULC_DIR="${LULC_DIR:-/home/flepin/lulc_collection02}"
-LULC_TILE_PATTERN="${LULC_TILE_PATTERN:-lulc_chile_collection02_*.tif}"
-
+LULC_STACK="${LULC_STACK:-/home/flepin/lulc/mapbiomas_chile_collection9.tif}"
 CLASSIFIED_DIR="${1:-/home/flepin/classi_v2}"
 WORK_ROOT="${2:-/home/flepin/filtering_work}"
 STEPS="${3:-all}"
 
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
+START_YEAR_BAND1="${START_YEAR_BAND1:-2000}"
 WORKERS=22
 
 # =====================================================
@@ -54,8 +52,7 @@ echo "INICIO FILTRADO POR CLASES MAPBIOMAS FUEGO"
 echo "============================================="
 echo "Python usado:         $PYTHON_ENV"
 echo "Script pipeline:      $PIPELINE_SCRIPT"
-echo "LULC (GEE tiles):     $LULC_DIR"
-echo "Patrón teselas:       $LULC_TILE_PATTERN"
+echo "Stack LULC:           $LULC_STACK"
 echo "Clasificados entrada: $CLASSIFIED_DIR"
 echo "Directorio trabajo:   $WORK_ROOT"
 echo "Pasos (STEPS):        $STEPS"
@@ -92,23 +89,16 @@ echo "GeoTIFF clasificados encontrados: $N_CLASSIFIED"
 needs_lulc=0
 if [ "$STEPS" = "all" ]; then
   needs_lulc=1
-elif echo ",${STEPS}," | grep -qE ',lulc_mosaic|,masks_'; then
+elif echo ",${STEPS}," | grep -qE ',masks_'; then
   needs_lulc=1
 fi
 
 if [ "$needs_lulc" -eq 1 ]; then
-  if [ ! -d "$LULC_DIR" ]; then
-    echo "ERROR: No existe el directorio LULC (teselas GEE):"
-    echo "$LULC_DIR"
+  if [ ! -e "$LULC_STACK" ]; then
+    echo "ERROR: No existe el raster LULC para máscaras:"
+    echo "$LULC_STACK"
     exit 1
   fi
-  N_LULC=$(find "$LULC_DIR" -maxdepth 1 -name 'lulc_chile_collection02_*.tif' 2>/dev/null | wc -l)
-  if [ "$N_LULC" -eq 0 ]; then
-    echo "ERROR: No hay archivos $LULC_TILE_PATTERN en:"
-    echo "$LULC_DIR"
-    exit 1
-  fi
-  echo "Teselas LULC encontradas: $N_LULC"
 fi
 
 mkdir -p "$WORK_ROOT"
@@ -116,6 +106,7 @@ mkdir -p "$WORK_ROOT"
 echo "Probando paquetes Python..."
 $PYTHON_ENV -c "import numpy; print('numpy OK')"
 $PYTHON_ENV -c "import rasterio; print('rasterio OK')"
+$PYTHON_ENV -c "import geopandas; print('geopandas OK')"
 
 echo "============================================="
 echo "Iniciando pipeline de filtrado"
@@ -123,7 +114,7 @@ echo "============================================="
 
 export REPO_ROOT="${FIRE_REPO}"
 export PYTHON="${PYTHON_ENV}"
-export LULC_DIR LULC_TILE_PATTERN CLASSIFIED_DIR WORK_ROOT FROM_YEAR TO_YEAR
+export LULC_STACK CLASSIFIED_DIR WORK_ROOT FROM_YEAR TO_YEAR START_YEAR_BAND1
 export WORKERS STEPS
 
 cd "${FIRE_REPO}"
@@ -138,7 +129,6 @@ fi
 
 echo "============================================="
 echo "PROCESO COMPLETO"
-echo "LULC mosaicos:     ${WORK_ROOT}/lulc_mosaics/"
-echo "Máscaras totales:  ${WORK_ROOT}/mascaras/totales/"
+echo "Máscaras totales: ${WORK_ROOT}/mascaras/totales/"
 echo "Rasters filtrados: ${WORK_ROOT}/classified_filtered/"
 echo "============================================="
