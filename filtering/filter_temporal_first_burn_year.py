@@ -115,6 +115,25 @@ def assign_origin_year_tile(
     return origin_year, value_grid, stats
 
 
+def _output_profile(src_profile: dict, dtype) -> dict:
+    """Write profile: match input dtype; PREDICTOR=2 only for integer rasters."""
+    profile = {
+        k: src_profile[k]
+        for k in ("height", "width", "transform", "crs")
+        if k in src_profile
+    }
+    profile.update(
+        dtype=dtype,
+        count=1,
+        nodata=src_profile.get("nodata", 0),
+        compress="deflate",
+        tiled=True,
+    )
+    if np.dtype(dtype).kind in ("i", "u"):
+        profile["predictor"] = 2
+    return profile
+
+
 def process_tile_group(args: tuple) -> dict:
     (
         key,
@@ -172,26 +191,20 @@ def process_tile_group(args: tuple) -> dict:
     }
 
     for year in years:
+        data = originals[year]
+        out_dtype = data.dtype
+        fill = np.asarray(fill_value, dtype=out_dtype)
+        out = np.full(data.shape, fill, dtype=out_dtype)
         keep = origin_year == year
-        out = np.full(originals[year].shape, fill_value, dtype=np.uint8)
-        out[keep] = 1
+        out[keep] = data[keep]
 
-        burned_before = is_burned(originals[year], nodata_by_year[year])
+        burned_before = is_burned(data, nodata_by_year[year])
         stats["pixels_written_by_year"][year] = int(keep.sum())
         stats.setdefault("pixels_removed_by_year", {})[year] = int(
             (burned_before & ~keep).sum()
         )
 
-        profile = profiles[year]
-        profile.update(
-            dtype=rasterio.uint8,
-            nodata=0,
-            count=1,
-            compress="deflate",
-            predictor=2,
-            tiled=True,
-        )
-
+        profile = _output_profile(profiles[year], out_dtype)
         out_path = output_dir / f"{year_to_path[year].stem}{suffix}.tif"
         with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(out, 1)
