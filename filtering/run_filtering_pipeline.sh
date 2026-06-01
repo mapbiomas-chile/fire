@@ -2,11 +2,12 @@
 # =============================================================================
 # MapBiomas Fire — filtrado por clases LULC (solo orquestación; scripts Python sin cambios)
 #
-# Configuración: filtering/cluster_paths.env (copiar desde cluster_paths.env.example)
-#   source filtering/cluster_paths.env
+# Leftraru (interactivo, sin sbatch):
+#   cd ~/fire && git checkout feat/filtering_pipeline
 #   bash filtering/run_filtering_pipeline.sh
 #
-# NLHPC: sbatch filtering/run_filtering_pipeline_slurm.sh
+# Opcional: filtering/cluster_paths.env sobreescribe las rutas por defecto.
+# Cola SLURM: sbatch filtering/run_filtering_pipeline_slurm.sh
 #
 # STEPS: masks_accumulated | masks_yearly | masks_total | filter | all
 # =============================================================================
@@ -21,11 +22,11 @@ if [[ -f "${SCRIPT_DIR}/cluster_paths.env" ]]; then
   source "${SCRIPT_DIR}/cluster_paths.env"
 fi
 
-PYTHON="${PYTHON:-python3}"
-
-LULC_STACK="${LULC_STACK:-}"
-CLASSIFIED_DIR="${CLASSIFIED_DIR:-}"
-WORK_ROOT="${WORK_ROOT:-}"
+# --- Rutas por defecto (leftraru / flepin) — override con cluster_paths.env ---
+PYTHON="${PYTHON:-/home/flepin/.conda/envs/mb_fuego/bin/python}"
+LULC_STACK="${LULC_STACK:-/home/flepin/lulc_collection02/lulc_2025_subset_mosaic_bbox_without_region5.tif}"
+CLASSIFIED_DIR="${CLASSIFIED_DIR:-/home/flepin/classification_20260528}"
+WORK_ROOT="${WORK_ROOT:-/home/flepin/filtering_work_local}"
 
 MASCARAS_ROOT="${MASCARAS_ROOT:-${WORK_ROOT}/mascaras}"
 ACCUMULATED_DIR="${ACCUMULATED_DIR:-${MASCARAS_ROOT}/acumuladas}"
@@ -35,10 +36,10 @@ FILTERED_DIR="${FILTERED_DIR:-${WORK_ROOT}/classified_filtered}"
 
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
-LULC_TO_YEAR="${LULC_TO_YEAR:-${TO_YEAR}}"
-START_YEAR_BAND1="${START_YEAR_BAND1:-1999}"
-COPY_MASK_2025_FROM_2024="${COPY_MASK_2025_FROM_2024:-0}"
-WORKERS="${WORKERS:-16}"
+LULC_TO_YEAR="${LULC_TO_YEAR:-2024}"
+START_YEAR_BAND1="${START_YEAR_BAND1:-2000}"
+COPY_MASK_2025_FROM_2024="${COPY_MASK_2025_FROM_2024:-1}"
+WORKERS="${WORKERS:-4}"
 FILL_VALUE="${FILL_VALUE:-0}"
 STEPS="${STEPS:-all}"
 
@@ -60,19 +61,13 @@ run_py() {
   "${PYTHON}" "$@"
 }
 
-if [[ -z "${LULC_STACK}" || ! -e "${LULC_STACK}" ]]; then
-  echo "ERROR: LULC_STACK not set or missing: ${LULC_STACK:-<empty>}" >&2
-  echo "Set it in filtering/cluster_paths.env" >&2
+if [[ ! -e "${LULC_STACK}" ]]; then
+  echo "ERROR: LULC_STACK not found: ${LULC_STACK}" >&2
   exit 1
 fi
 
-if [[ -z "${CLASSIFIED_DIR}" || ! -d "${CLASSIFIED_DIR}" ]]; then
-  echo "ERROR: CLASSIFIED_DIR not set or missing: ${CLASSIFIED_DIR:-<empty>}" >&2
-  exit 1
-fi
-
-if [[ -z "${WORK_ROOT}" ]]; then
-  echo "ERROR: WORK_ROOT not set" >&2
+if [[ ! -d "${CLASSIFIED_DIR}" ]]; then
+  echo "ERROR: CLASSIFIED_DIR not found: ${CLASSIFIED_DIR}" >&2
   exit 1
 fi
 

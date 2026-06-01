@@ -1,52 +1,82 @@
-# Filtrado local (Windows)
+# Filtrado interactivo en leftraru (sin SLURM)
 
-## 1. Rutas de datos
+Correr el pipeline **en la máquina leftraru** (SSH), **sin** `sbatch`: no entra a la cola del cluster, pero usa los mismos datos y scripts que en un job.
 
-| Qué | Ruta (ajústala si guardas los datos en otro disco) |
-|-----|---------------------------------------------------|
-| LULC multibanda | `D:/flepin/lulc_collection02/lulc_2025_subset_mosaic_bbox_without_region5.tif` |
-| Clasificados | `D:/flepin/classification_20260528/*.tif` |
-| Salidas | `D:/flepin/filtering_work_local/` |
+Para enviar a la cola → [CLUSTER.md](CLUSTER.md) y `sbatch filtering/run_filtering_pipeline_slurm.sh`.
 
-El stack LULC llega hasta **2024**. Para filtrar tiles **2025** (clasificación copiada desde 2024), el pipeline duplica las máscaras 2024 → 2025 (`COPY_MASK_2025_FROM_2024=1`).
+## 1. Datos en leftraru
+
+| Qué | Ruta |
+|-----|------|
+| Repo | `/home/flepin/fire` (rama `feat/filtering_pipeline`) |
+| LULC multibanda | `/home/flepin/lulc_collection02/lulc_2025_subset_mosaic_bbox_without_region5.tif` |
+| Clasificados | `/home/flepin/classification_20260528/*.tif` |
+| Salidas | `/home/flepin/filtering_work_local/` |
+
+LULC hasta **2024**; para **2025** el pipeline copia máscaras 2024→2025 (`COPY_MASK_2025_FROM_2024=1`).
 
 ## 2. Configuración
 
+Las rutas ya están en `run_filtering_pipeline.sh`. Solo hace falta clonar/actualizar el repo:
+
 ```bash
-cd /c/Users/pipel/OneDrive/Escritorio/MAPBIOMAS/CURSOR/fire
+cd ~/fire
+git fetch origin
 git checkout feat/filtering_pipeline
-
-cp filtering/cluster_paths.local.env.example filtering/cluster_paths.env
+git pull
 ```
 
-Edita `cluster_paths.env`:
+Opcional: `cp filtering/cluster_paths.leftraru.env.example filtering/cluster_paths.env` para cambiar rutas sin editar el `.sh`.
 
-1. **`LULC_STACK`** y **`CLASSIFIED_DIR`** si no están en `D:/flepin/`.
-2. **`START_YEAR_BAND1`**: año de la banda 1 del GeoTIFF. Comprueba con:
+Comprueba bandas del LULC y ajusta `START_YEAR_BAND1` si hace falta (por defecto `2000`):
 
 ```bash
-python -c "import rasterio; p=r'D:/flepin/lulc_collection02/lulc_2025_subset_mosaic_bbox_without_region5.tif'; s=rasterio.open(p); print('bands', s.count); s.close()"
+$PYTHON -c "
+import rasterio
+p='/home/flepin/lulc_collection02/lulc_2025_subset_mosaic_bbox_without_region5.tif'
+with rasterio.open(p) as s:
+    print('bands', s.count)
+"
 ```
 
-Si la banda 1 es 2000 y la 25 es 2024, usa `START_YEAR_BAND1=2000`.
-
-## 3. Ejecutar
-
-**Git Bash:**
+## 3. Ejecutar (sin sbatch)
 
 ```bash
-source filtering/cluster_paths.env
+cd ~/fire
+conda activate mb_fuego
 bash filtering/run_filtering_pipeline.sh
 ```
 
-**PowerShell** (mismas rutas; ejecuta los 4 scripts Python como en el README principal).
+Recomendado en sesión larga:
+
+```bash
+screen -S filter
+# ... comandos de arriba ...
+# Ctrl+A, D para detach
+```
+
+**No uses** `sbatch` si quieres solo interactivo.
 
 ## 4. Salidas
 
 ```
-D:/flepin/filtering_work_local/
+/home/flepin/filtering_work_local/
 ├── mascaras/acumuladas/
 ├── mascaras/by_year/
-├── mascaras/totales/     ← mascara_total_2025.tif (copiada desde 2024 si aplica)
+├── mascaras/totales/
 └── classified_filtered/
 ```
+
+## 5. Pasos parciales
+
+En `cluster_paths.env`:
+
+```bash
+export STEPS="masks_accumulated,masks_yearly,masks_total"   # solo máscaras
+# export STEPS="filter"                                     # solo filtrar
+```
+
+## 6. Si se queda sin memoria en login
+
+- Baja `WORKERS` (p. ej. `2` o `1`) en `cluster_paths.env`.
+- O usa SLURM con más RAM: `sbatch filtering/run_filtering_pipeline_slurm.sh`.

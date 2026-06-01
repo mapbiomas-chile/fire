@@ -1,8 +1,8 @@
 # Filtering
 
-**Local (Windows):** [LOCAL.md](LOCAL.md) — copy `cluster_paths.local.env.example` → `cluster_paths.env`.
+**Leftraru interactivo (sin sbatch):** [LOCAL.md](LOCAL.md) — `cluster_paths.leftraru.env.example` → `cluster_paths.env`, luego `bash filtering/run_filtering_pipeline.sh`.
 
-**Cluster (NLHPC):** path-only pipeline and checklist → [CLUSTER.md](CLUSTER.md). Configure `cluster_paths.env` and run `run_filtering_pipeline_slurm.sh`.
+**Cola SLURM (NLHPC):** [CLUSTER.md](CLUSTER.md) — `sbatch filtering/run_filtering_pipeline_slurm.sh`.
 
 Utilities that run after the burned-area classifier (see [../classification/README.md](../classification/README.md)). The goal of this stage is to turn raw classified rasters into clean, analysis-ready products: per-year masks of non-burnable classes, filtered rasters, polygonized fire scars and summary statistics used to pick filtering thresholds.
 
