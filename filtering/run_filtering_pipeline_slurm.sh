@@ -7,7 +7,7 @@
 #SBATCH --mem=64GB
 #SBATCH --mail-user=felipe.lepin@ug.uchile.cl
 #SBATCH --mail-type=ALL
-#SBATCH -t 8:00:00
+#SBATCH -t 01:00:00
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 
