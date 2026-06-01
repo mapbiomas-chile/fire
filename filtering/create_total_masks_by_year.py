@@ -3,11 +3,18 @@
 
 import argparse
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 import rasterio
+
+_FILTERING_DIR = Path(__file__).resolve().parent
+if str(_FILTERING_DIR) not in sys.path:
+    sys.path.insert(0, str(_FILTERING_DIR))
+
+from gtiff_io import mask_gtiff_profile, open_mask_writer
 
 
 ACCUMULATED_MASK_NAMES = [
@@ -120,8 +127,7 @@ def write_total_for_year(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"mascara_total_{year}.tif"
-    profile = dict(base_profile)
-    with rasterio.open(output_path, "w", **profile) as dst:
+    with open_mask_writer(output_path, base_profile) as dst:
         dst.write(total_mask, 1)
 
     return output_path
@@ -192,14 +198,7 @@ def main() -> int:
     if base_profile is None:
         raise RuntimeError("Could not read accumulated masks profile.")
 
-    base_profile.update(
-        dtype=rasterio.uint8,
-        count=1,
-        nodata=0,
-        compress="deflate",
-        predictor=2,
-        tiled=True,
-    )
+    base_profile = mask_gtiff_profile(base_profile)
 
     years = list(range(args.from_year, args.to_year + 1))
     n_years = len(years)

@@ -64,11 +64,14 @@ def _filter_one_file(args):
     filtered = np.where(block_mask, fill_value, data).astype(data.dtype)
 
     profile.update(
+        driver="GTiff",
         count=1,
         dtype=filtered.dtype,
         compress="deflate",
         predictor=2,
         tiled=True,
+        blockxsize=512,
+        blockysize=512,
     )
 
     output_name = f"{tif_path.stem}_filtered_{run_timestamp}.tif"

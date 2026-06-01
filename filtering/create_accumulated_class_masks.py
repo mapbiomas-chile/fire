@@ -15,7 +15,10 @@ _FILTERING_DIR = Path(__file__).resolve().parent
 if str(_FILTERING_DIR) not in sys.path:
     sys.path.insert(0, str(_FILTERING_DIR))
 
+from gtiff_io import open_mask_writer
 from lulc_year_from_name import year_from_lulc_path
+
+SCRIPT_ID = "create_accumulated_class_masks GTiff-outputs 2026-05-28"
 
 CLASS_SPECS = [
     (29, "mascara_alfloramiento_rocoso_acumulado.tif"),
@@ -69,29 +72,16 @@ def iter_windows(height: int, width: int, chunk_size: int):
             yield Window(col_off=col_off, row_off=row_off, width=win_w, height=win_h)
 
 
-def _write_profile(src_profile: dict) -> dict:
-    profile = src_profile.copy()
-    profile.update(
-        dtype=rasterio.uint8,
-        count=1,
-        nodata=0,
-        compress="deflate",
-        predictor=2,
-        tiled=True,
-    )
-    return profile
-
-
 def from_multiband_stack(input_path: Path, output_dir: Path, chunk_size: int) -> None:
     with rasterio.open(input_path) as src:
         if src.count < 1:
             raise ValueError("Input raster has no bands.")
+        print(f"[INFO] Input {input_path.name}: driver={src.driver!r}, bands={src.count}")
 
-        profile = _write_profile(src.profile)
         outputs = {}
         try:
             for _, filename in CLASS_SPECS:
-                outputs[filename] = rasterio.open(output_dir / filename, "w", **profile)
+                outputs[filename] = open_mask_writer(output_dir / filename, src.profile)
 
             for window in iter_windows(src.height, src.width, chunk_size):
                 block = src.read(window=window)
@@ -111,6 +101,8 @@ def _collect_yearly_paths(
 ) -> list[tuple[int, Path]]:
     paths: list[tuple[int, Path]] = []
     for path in sorted(yearly_dir.glob(pattern)):
+        if path.suffix.lower() == ".vrt":
+            continue
         year = year_from_lulc_path(path)
         if year is None:
             print(f"[WARN] Skip (no year): {path.name}")
@@ -138,13 +130,14 @@ def from_yearly_dir(
     print(f"[INFO] Accumulating over years: {years}")
 
     with rasterio.open(year_paths[0][1]) as ref:
-        profile = _write_profile(ref.profile)
+        print(f"[INFO] Reference mosaic {ref.name}: driver={ref.driver!r}")
+        ref_profile = ref.profile
         height, width = ref.height, ref.width
 
     outputs = {}
     try:
         for _, filename in CLASS_SPECS:
-            outputs[filename] = rasterio.open(output_dir / filename, "w", **profile)
+            outputs[filename] = open_mask_writer(output_dir / filename, ref_profile)
 
         for window in iter_windows(height, width, chunk_size):
             class_masks = {
@@ -169,6 +162,7 @@ def from_yearly_dir(
 
 
 def main() -> int:
+    print(f"[INFO] {SCRIPT_ID}")
     args = parse_args()
     output_dir = Path(args.output_dir)
     if args.chunk_size <= 0:

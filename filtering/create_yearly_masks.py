@@ -16,6 +16,7 @@ _FILTERING_DIR = Path(__file__).resolve().parent
 if str(_FILTERING_DIR) not in sys.path:
     sys.path.insert(0, str(_FILTERING_DIR))
 
+from gtiff_io import open_mask_writer
 from lulc_year_from_name import year_from_lulc_path
 
 # (output stem, class id) — filenames: mascara_<stem>_<year>.tif
@@ -74,20 +75,11 @@ def _write_masks_for_year(
     output_dir: Path,
     year: int,
 ) -> int:
-    out_profile = profile.copy()
-    out_profile.update(
-        dtype=rasterio.uint8,
-        count=1,
-        nodata=0,
-        compress="deflate",
-        predictor=2,
-        tiled=True,
-    )
     n = 0
     for class_name, class_value in TARGET_CLASSES:
         mask = (data == class_value).astype(np.uint8)
         output_path = output_dir / f"mascara_{class_name}_{year}.tif"
-        with rasterio.open(output_path, "w", **out_profile) as dst:
+        with open_mask_writer(output_path, profile) as dst:
             dst.write(mask, 1)
         n += 1
     return n
