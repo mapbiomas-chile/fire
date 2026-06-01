@@ -173,8 +173,8 @@ def process_tile_group(args: tuple) -> dict:
 
     for year in years:
         keep = origin_year == year
-        out = np.full(originals[year].shape, fill_value, dtype=originals[year].dtype)
-        out[keep] = value_grid[keep]
+        out = np.full(originals[year].shape, fill_value, dtype=np.uint8)
+        out[keep] = 1
 
         burned_before = is_burned(originals[year], nodata_by_year[year])
         stats["pixels_written_by_year"][year] = int(keep.sum())
@@ -183,7 +183,14 @@ def process_tile_group(args: tuple) -> dict:
         )
 
         profile = profiles[year]
-        profile.update(count=1, compress="deflate", predictor=2, tiled=True)
+        profile.update(
+            dtype=rasterio.uint8,
+            nodata=0,
+            count=1,
+            compress="deflate",
+            predictor=2,
+            tiled=True,
+        )
 
         out_path = output_dir / f"{year_to_path[year].stem}{suffix}.tif"
         with rasterio.open(out_path, "w", **profile) as dst:

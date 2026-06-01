@@ -60,12 +60,22 @@ def _filter_one_file(args):
         )
 
     # Binary mask mode: only pixels equal to 1 are filtered.
-    block_mask = aligned_mask == 1
-    filtered = np.where(block_mask, fill_value, data).astype(data.dtype)
+    block_mask = np.isclose(aligned_mask, 1.0) | (aligned_mask == 1)
+    burned = np.zeros(data.shape, dtype=bool)
+    if data.dtype.kind == "f":
+        burned = np.isfinite(data) & (data != 0)
+    else:
+        burned = data != 0
+        if profile.get("nodata") is not None:
+            burned &= data != profile["nodata"]
+
+    # Keep 0/1 burn values (uint8); avoid float + PREDICTOR=2 which corrupts GeoTIFFs.
+    filtered = np.where(block_mask, fill_value, np.where(burned, 1, 0)).astype(np.uint8)
 
     profile.update(
         count=1,
-        dtype=filtered.dtype,
+        dtype=rasterio.uint8,
+        nodata=0,
         compress="deflate",
         predictor=2,
         tiled=True,
