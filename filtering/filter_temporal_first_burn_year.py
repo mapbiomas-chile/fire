@@ -40,10 +40,35 @@ def tile_key(path: Path) -> str:
 
 
 def is_burned(data: np.ndarray, nodata: float | None) -> np.ndarray:
-    burned = data != 0
+    """Binary burn mask; do not copy raw pixel values to output (may be float/noisy)."""
+    burned = data > 0
     if nodata is not None and not (isinstance(nodata, float) and np.isnan(nodata)):
         burned &= data != nodata
     return burned
+
+
+def detect_burn_value(
+    originals: dict[int, np.ndarray],
+    nodata_by_year: dict[int, float | None],
+    years: list[int],
+) -> int:
+    """Use the single positive class value in inputs (expected: 1)."""
+    samples: list[np.ndarray] = []
+    for year in years:
+        data = originals[year]
+        burned = is_burned(data, nodata_by_year[year])
+        if np.any(burned):
+            samples.append(data[burned].ravel())
+    if not samples:
+        return 1
+    positive = np.concatenate(samples)
+    uniq = np.unique(positive)
+    if uniq.size == 1:
+        return int(uniq[0])
+    raise ValueError(
+        f"Expected one burn value (e.g. 1), got {uniq[:20].tolist()} "
+        f"(check inputs in classified_filtered, not first_burn outputs)"
+    )
 
 
 def min_neighbor_origin(origin_year: np.ndarray, connectivity: int) -> np.ndarray:
@@ -68,14 +93,10 @@ def assign_origin_year_tile(
     years: list[int],
     spatial_merge: bool,
     connectivity: int,
-) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
-    """
-    Returns (origin_year grid, value grid, stats).
-    value grid holds the burn value written for the assigned origin year.
-    """
+) -> tuple[np.ndarray, dict[str, int]]:
+    """Returns (origin_year grid, stats)."""
     shape = next(iter(originals.values())).shape
     origin_year = np.zeros(shape, dtype=np.uint16)
-    value_grid = np.zeros(shape, dtype=next(iter(originals.values())).dtype)
 
     stats = {
         "pixels_same_cell_removed": 0,
@@ -103,35 +124,31 @@ def assign_origin_year_tile(
             if np.any(merge):
                 merged_origins = min_orig[merge].astype(np.uint16)
                 origin_year[merge] = merged_origins
-                value_grid[merge] = data[merge]
                 stats["pixels_spatial_merged_to_earlier_year"] += int(merge.sum())
                 new_only &= ~merge
 
         if np.any(new_only):
             origin_year[new_only] = np.uint16(year)
-            value_grid[new_only] = data[new_only]
             stats["pixels_new_events"] += int(new_only.sum())
 
-    return origin_year, value_grid, stats
+    return origin_year, stats
 
 
-def _output_profile(src_profile: dict, dtype) -> dict:
-    """Write profile: match input dtype; PREDICTOR=2 only for integer rasters."""
-    profile = {
-        k: src_profile[k]
-        for k in ("height", "width", "transform", "crs")
-        if k in src_profile
+def _binary_gtiff_profile(src_profile: dict, nodata: int = 0) -> dict:
+    """Clean uint8 0/1 GeoTIFF (no metadata inherited from float/classified sources)."""
+    return {
+        "driver": "GTiff",
+        "height": src_profile["height"],
+        "width": src_profile["width"],
+        "transform": src_profile["transform"],
+        "crs": src_profile["crs"],
+        "dtype": rasterio.uint8,
+        "count": 1,
+        "nodata": nodata,
+        "compress": "deflate",
+        "predictor": 2,
+        "tiled": True,
     }
-    profile.update(
-        dtype=dtype,
-        count=1,
-        nodata=src_profile.get("nodata", 0),
-        compress="deflate",
-        tiled=True,
-    )
-    if np.dtype(dtype).kind in ("i", "u"):
-        profile["predictor"] = 2
-    return profile
 
 
 def process_tile_group(args: tuple) -> dict:
@@ -170,13 +187,15 @@ def process_tile_group(args: tuple) -> dict:
         originals[year] = data
         nodata_by_year[year] = nodata
 
-    origin_year, value_grid, assign_stats = assign_origin_year_tile(
+    origin_year, assign_stats = assign_origin_year_tile(
         originals,
         nodata_by_year,
         years,
         spatial_merge=spatial_merge,
         connectivity=connectivity,
     )
+    burn_value = int(detect_burn_value(originals, nodata_by_year, years))
+    fill_u8 = int(fill_value)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -184,19 +203,19 @@ def process_tile_group(args: tuple) -> dict:
     stats: dict = {
         "tile": key,
         "years": years,
+        "burn_value": burn_value,
         "spatial_merge": spatial_merge,
         "assign": assign_stats,
         "pixels_written_by_year": {},
+        "unique_values_by_year": {},
         "output_files": [],
     }
 
     for year in years:
         data = originals[year]
-        out_dtype = data.dtype
-        fill = np.asarray(fill_value, dtype=out_dtype)
-        out = np.full(data.shape, fill, dtype=out_dtype)
         keep = origin_year == year
-        out[keep] = data[keep]
+        out = np.full(data.shape, fill_u8, dtype=np.uint8)
+        out[keep] = np.uint8(burn_value)
 
         burned_before = is_burned(data, nodata_by_year[year])
         stats["pixels_written_by_year"][year] = int(keep.sum())
@@ -204,10 +223,18 @@ def process_tile_group(args: tuple) -> dict:
             (burned_before & ~keep).sum()
         )
 
-        profile = _output_profile(profiles[year], out_dtype)
+        profile = _binary_gtiff_profile(profiles[year], nodata=fill_u8)
         out_path = output_dir / f"{year_to_path[year].stem}{suffix}.tif"
         with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(out, 1)
+
+        with rasterio.open(out_path) as verify:
+            uniq = np.unique(verify.read(1))
+        stats["unique_values_by_year"][year] = uniq.tolist()
+        allowed = {fill_u8, burn_value}
+        if not set(int(x) for x in uniq.tolist()).issubset(allowed):
+            raise ValueError(f"{out_path.name}: unexpected values {uniq.tolist()}")
+
         stats["output_files"].append(str(out_path))
 
     return stats
@@ -221,6 +248,8 @@ def group_inputs(
 ) -> dict[str, dict[int, Path]]:
     groups: dict[str, dict[int, Path]] = defaultdict(dict)
     for path in sorted(input_dir.glob("*.tif")):
+        if "_first_burn_year" in path.stem:
+            continue
         if name_contains and name_contains not in path.name:
             continue
         try:
