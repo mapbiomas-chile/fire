@@ -40,6 +40,8 @@ FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
 START_YEAR_BAND1="${START_YEAR_BAND1:-2000}"
 WORKERS="${WORKERS:-16}"
+# Mosaic merge is memory-heavy; keep low (1–2) even when WORKERS is high.
+MOSAIC_WORKERS="${MOSAIC_WORKERS:-1}"
 FILL_VALUE="${FILL_VALUE:-0}"
 STEPS="${STEPS:-all}"
 
@@ -103,13 +105,14 @@ if step_enabled "lulc_mosaic"; then
     log "=== Skip lulc_mosaic (LULC_DIR not set) ==="
   else
     log "=== Step 0: mosaic GEE LULC tiles by year ==="
+    log "Mosaic workers: ${MOSAIC_WORKERS} (mask/filter workers: ${WORKERS})"
     run_py filtering/mosaic_gee_lulc_tiles.py \
       --input-dir "${LULC_DIR}" \
       --output-dir "${LULC_MOSAICS_DIR}" \
       --pattern "${LULC_TILE_PATTERN}" \
       --from-year "${FROM_YEAR}" \
       --to-year "${TO_YEAR}" \
-      --workers "${WORKERS}"
+      --workers "${MOSAIC_WORKERS}"
   fi
 fi
 

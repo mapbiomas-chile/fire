@@ -55,8 +55,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--workers",
         type=int,
-        default=max(1, (os.cpu_count() or 1) - 1),
-        help="Parallel workers (one year per process).",
+        default=1,
+        help=(
+            "Parallel workers (one year per process). Default 1: each worker loads "
+            "full tiles into RAM; >2 often OOMs on 64GB nodes."
+        ),
     )
     p.add_argument(
         "--overwrite",
