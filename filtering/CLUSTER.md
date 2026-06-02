@@ -70,8 +70,10 @@ filtering_work/
 │   ├── acumuladas/          # mascara_*_acumulado.tif
 │   ├── by_year/             # mascara_rio_lago_2013.tif, ...
 │   └── totales/             # mascara_total_2013.tif, ...
-└── classified_filtered/     # tiles filtrados + JSON por tile
+└── classified_filtered/     # salida final (LULC + temporal first-burn)
 ```
+
+Intermedio LULC opcional: `classified_lulc_only/` con `KEEP_LULC_INTERMEDIATE=1`.
 
 ## 5. Configuración de rutas
 
@@ -109,7 +111,7 @@ Logs: `~/logs/fire_class_filter_<JOBID>.out` / `.err`
 | `masks_accumulated` | `create_accumulated_class_masks.py` | Máscaras OR años fijos (roca, arena, salar, hielo, sin vegetación) |
 | `masks_yearly` | `create_yearly_masks.py` | Máscaras por año (río/lago, infra, agricultura, pastura) |
 | `masks_total` | `create_total_masks_by_year.py` | `mascara_total_<year>.tif` |
-| `filter` | `filter_classified_parallel.py` | Aplica máscara a clasificados |
+| `filter` | `run_classified_filters.py` | LULC + temporal first-burn (un solo paso) |
 
 `STEPS=all` ejecuta los cuatro. No incluye polygonize ni umbral de área (scripts aparte en `filtering/README.md`).
 

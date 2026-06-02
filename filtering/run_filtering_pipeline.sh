@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# MapBiomas Fire — filtrado por clases LULC (solo orquestación; scripts Python sin cambios)
+# MapBiomas Fire — pipeline de filtrado post-clasificación
 #
 # Leftraru (interactivo, sin sbatch):
 #   cd ~/fire && git checkout feat/filtering_pipeline
@@ -9,8 +9,9 @@
 # Opcional: filtering/cluster_paths.env sobreescribe las rutas por defecto.
 # Cola SLURM: sbatch filtering/run_filtering_pipeline_slurm.sh
 #
-# STEPS (all): masks_accumulated, masks_yearly, masks_total, filter, temporal_first_burn
-#   temporal_first_burn reads classified_filtered/ → classified_first_burn/
+# STEPS (all): masks_accumulated, masks_yearly, masks_total, filter
+#   filter = LULC + temporal first-burn (un solo paso)
+# Pasos legacy (re-ejecución parcial): lulc_filter, temporal_first_burn
 # =============================================================================
 
 set -euo pipefail
@@ -33,12 +34,22 @@ MASCARAS_ROOT="${MASCARAS_ROOT:-${WORK_ROOT}/mascaras}"
 ACCUMULATED_DIR="${ACCUMULATED_DIR:-${MASCARAS_ROOT}/acumuladas}"
 YEARLY_MASKS_DIR="${YEARLY_MASKS_DIR:-${MASCARAS_ROOT}/by_year}"
 TOTAL_MASKS_DIR="${TOTAL_MASKS_DIR:-${MASCARAS_ROOT}/totales}"
-FILTERED_DIR="${FILTERED_DIR:-${WORK_ROOT}/classified_filtered}"
-FIRST_BURN_DIR="${FIRST_BURN_DIR:-${WORK_ROOT}/classified_first_burn}"
+
+# Salida final del filtrado (LULC + temporal)
+FILTER_OUTPUT_DIR="${FILTER_OUTPUT_DIR:-${WORK_ROOT}/classified_filtered}"
+# Intermedio LULC (solo si KEEP_LULC_INTERMEDIATE=1 o paso lulc_filter)
+LULC_INTERMEDIATE_DIR="${LULC_INTERMEDIATE_DIR:-${WORK_ROOT}/classified_lulc_only}"
+KEEP_LULC_INTERMEDIATE="${KEEP_LULC_INTERMEDIATE:-0}"
+
+# Compatibilidad con nombres anteriores
+FILTERED_DIR="${FILTERED_DIR:-${LULC_INTERMEDIATE_DIR}}"
+FIRST_BURN_DIR="${FIRST_BURN_DIR:-${FILTER_OUTPUT_DIR}}"
+
 TEMPORAL_SUFFIX="${TEMPORAL_SUFFIX:-_first_burn_year}"
 TEMPORAL_SPATIAL_MERGE="${TEMPORAL_SPATIAL_MERGE:-0}"
 TEMPORAL_CONNECTIVITY="${TEMPORAL_CONNECTIVITY:-8}"
-TEMPORAL_NAME_CONTAINS="${TEMPORAL_NAME_CONTAINS:-141228}"
+TEMPORAL_YEAR_TOKEN_INDEX="${TEMPORAL_YEAR_TOKEN_INDEX:-3}"
+FILTER_NAME_CONTAINS="${FILTER_NAME_CONTAINS:-${TEMPORAL_NAME_CONTAINS:-}}"
 
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
@@ -49,7 +60,7 @@ WORKERS="${WORKERS:-4}"
 FILL_VALUE="${FILL_VALUE:-0}"
 STEPS="${STEPS:-all}"
 
-DEFAULT_STEPS="masks_accumulated,masks_yearly,masks_total,filter,temporal_first_burn"
+DEFAULT_STEPS="masks_accumulated,masks_yearly,masks_total,filter"
 
 log() { echo "[$(date -Iseconds)] $*"; }
 
@@ -67,17 +78,91 @@ run_py() {
   "${PYTHON}" "$@"
 }
 
+run_unified_filter() {
+  local mode="${1:-full}"
+  local classified_input="${CLASSIFIED_DIR}"
+  local output_dir="${FILTER_OUTPUT_DIR}"
+  local lulc_dir="${LULC_INTERMEDIATE_DIR}"
+  local extra_args=()
+
+  case "${mode}" in
+    full)
+      log "=== Filter: LULC masks + temporal first-burn (unified) ==="
+      ;;
+    lulc)
+      log "=== Filter: LULC masks only (legacy step lulc_filter) ==="
+      output_dir="${LULC_INTERMEDIATE_DIR}"
+      extra_args+=(--lulc-only)
+      ;;
+    temporal)
+      log "=== Filter: temporal first-burn only (legacy step temporal_first_burn) ==="
+      classified_input="${TEMPORAL_INPUT_DIR:-${LULC_INTERMEDIATE_DIR}}"
+      if [[ ! -d "${classified_input}" ]]; then
+        classified_input="${FILTERED_DIR}"
+      fi
+      extra_args+=(--temporal-only)
+      ;;
+    *)
+      echo "ERROR: unknown filter mode: ${mode}" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ ! -d "${classified_input}" && "${mode}" == "temporal" ]]; then
+    echo "ERROR: LULC-filtered input not found (run filter or lulc_filter first): ${classified_input}" >&2
+    exit 1
+  fi
+
+  FILTER_ARGS=(
+    filtering/run_classified_filters.py
+    --classified-dir "${classified_input}"
+    --masks-dir "${TOTAL_MASKS_DIR}"
+    --output-dir "${output_dir}"
+    --lulc-intermediate-dir "${lulc_dir}"
+    --from-year "${FROM_YEAR}"
+    --to-year "${TO_YEAR}"
+    --fill-value "${FILL_VALUE}"
+    --workers "${WORKERS}"
+    --temporal-suffix "${TEMPORAL_SUFFIX}"
+    --year-token-index "${TEMPORAL_YEAR_TOKEN_INDEX}"
+    --connectivity "${TEMPORAL_CONNECTIVITY}"
+    --stats-json "${WORK_ROOT}/logs/filter_stats.json"
+  )
+  if [[ "${TEMPORAL_SPATIAL_MERGE}" == "1" ]]; then
+    FILTER_ARGS+=(--spatial-merge)
+  else
+    FILTER_ARGS+=(--no-spatial-merge)
+  fi
+  if [[ "${KEEP_LULC_INTERMEDIATE}" == "1" ]]; then
+    FILTER_ARGS+=(--keep-lulc-intermediate)
+  fi
+  if [[ -n "${FILTER_NAME_CONTAINS}" ]]; then
+    FILTER_ARGS+=(--name-contains "${FILTER_NAME_CONTAINS}")
+    log "Name filter (temporal): ${FILTER_NAME_CONTAINS}"
+  fi
+  FILTER_ARGS+=("${extra_args[@]}")
+
+  log "Classified input: ${classified_input}"
+  log "Filter output:    ${output_dir}"
+  if [[ "${mode}" == "full" ]]; then
+    log "LULC intermediate: ${lulc_dir} (keep=${KEEP_LULC_INTERMEDIATE})"
+  fi
+  run_py "${FILTER_ARGS[@]}"
+}
+
 if [[ ! -e "${LULC_STACK}" ]]; then
   echo "ERROR: LULC_STACK not found: ${LULC_STACK}" >&2
   exit 1
 fi
 
-if [[ ! -d "${CLASSIFIED_DIR}" ]]; then
-  echo "ERROR: CLASSIFIED_DIR not found: ${CLASSIFIED_DIR}" >&2
-  exit 1
+if step_enabled "filter" || step_enabled "lulc_filter"; then
+  if [[ ! -d "${CLASSIFIED_DIR}" ]]; then
+    echo "ERROR: CLASSIFIED_DIR not found: ${CLASSIFIED_DIR}" >&2
+    exit 1
+  fi
 fi
 
-mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL_MASKS_DIR}" "${FILTERED_DIR}" "${FIRST_BURN_DIR}"
+mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL_MASKS_DIR}" "${FILTER_OUTPUT_DIR}" "${LULC_INTERMEDIATE_DIR}"
 cd "${REPO_ROOT}"
 
 log "REPO_ROOT=${REPO_ROOT}"
@@ -88,6 +173,7 @@ fi
 log "LULC_STACK=${LULC_STACK} (band 1 = ${START_YEAR_BAND1})"
 log "CLASSIFIED_DIR=${CLASSIFIED_DIR}"
 log "WORK_ROOT=${WORK_ROOT}"
+log "FILTER_OUTPUT_DIR=${FILTER_OUTPUT_DIR}"
 log "STEPS=${STEPS}"
 log "LULC mask years: ${FROM_YEAR}-${LULC_TO_YEAR} | Filter/classified years: ${FROM_YEAR}-${TO_YEAR}"
 
@@ -133,52 +219,24 @@ if step_enabled "masks_total"; then
 fi
 
 if step_enabled "filter"; then
-  log "=== Step 2: apply year masks to classified rasters ==="
-  run_py filtering/filter_classified_parallel.py \
-    --input-dir "${CLASSIFIED_DIR}" \
-    --masks-dir "${TOTAL_MASKS_DIR}" \
-    --output-dir "${FILTERED_DIR}" \
-    --workers "${WORKERS}" \
-    --fill-value "${FILL_VALUE}"
+  run_unified_filter full
+fi
+
+if step_enabled "lulc_filter"; then
+  run_unified_filter lulc
 fi
 
 if step_enabled "temporal_first_burn"; then
-  log "=== Step 3: temporal scar dedup (first burn year + spatial merge) ==="
-  TEMPORAL_INPUT="${TEMPORAL_INPUT_DIR:-${FILTERED_DIR}}"
-  if [[ ! -d "${TEMPORAL_INPUT}" ]]; then
-    echo "ERROR: Temporal input dir not found (run filter first): ${TEMPORAL_INPUT}" >&2
-    exit 1
-  fi
-  TEMPORAL_ARGS=(
-    --input-dir "${TEMPORAL_INPUT}"
-    --output-dir "${FIRST_BURN_DIR}"
-    --from-year "${FROM_YEAR}"
-    --to-year "${TO_YEAR}"
-    --fill-value "${FILL_VALUE}"
-    --workers "${WORKERS}"
-    --suffix "${TEMPORAL_SUFFIX}"
-    --connectivity "${TEMPORAL_CONNECTIVITY}"
-    --stats-json "${WORK_ROOT}/logs/temporal_first_burn_stats.json"
-  )
-  if [[ "${TEMPORAL_SPATIAL_MERGE}" == "1" ]]; then
-    TEMPORAL_ARGS+=(--spatial-merge)
-  else
-    TEMPORAL_ARGS+=(--no-spatial-merge)
-  fi
-  if [[ -n "${TEMPORAL_NAME_CONTAINS}" ]]; then
-    TEMPORAL_ARGS+=(--name-contains "${TEMPORAL_NAME_CONTAINS}")
-  fi
-  log "Temporal input:  ${TEMPORAL_INPUT}"
-  log "Name filter:     ${TEMPORAL_NAME_CONTAINS:-<all tiles>}"
-  log "Temporal output: ${FIRST_BURN_DIR}"
-  run_py filtering/filter_temporal_first_burn_year.py "${TEMPORAL_ARGS[@]}"
+  run_unified_filter temporal
 fi
 
 log "=== Pipeline finished ==="
 log "Accumulated masks: ${ACCUMULATED_DIR}"
 log "Yearly masks:      ${YEARLY_MASKS_DIR}"
 log "Total masks:       ${TOTAL_MASKS_DIR}/mascara_total_<year>.tif"
-log "Filtered rasters:  ${FILTERED_DIR}"
-if step_enabled "temporal_first_burn"; then
-  log "First-burn year:   ${FIRST_BURN_DIR}"
+if step_enabled "filter" || step_enabled "temporal_first_burn"; then
+  log "Filtered output:   ${FILTER_OUTPUT_DIR}"
+fi
+if [[ "${KEEP_LULC_INTERMEDIATE}" == "1" ]] && { step_enabled "filter" || step_enabled "lulc_filter"; }; then
+  log "LULC intermediate: ${LULC_INTERMEDIATE_DIR}"
 fi

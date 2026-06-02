@@ -61,11 +61,13 @@ screen -S filter
 
 ```
 /home/flepin/filtering_work_local/
-├── mascaras/acumuladas/
-├── mascaras/by_year/
-├── mascaras/totales/
-└── classified_filtered/
+├── mascaras/...
+└── classified_filtered/      ← salida final (LULC + temporal first-burn)
 ```
+
+Intermedio LULC (opcional): `classified_lulc_only/` si `export KEEP_LULC_INTERMEDIATE=1`.
+
+Con `STEPS=all` el pipeline corre máscaras + **un solo paso `filter`** (LULC y temporal). Solo máscaras: `export STEPS=masks_accumulated,masks_yearly,masks_total`.
 
 ## 5. Pasos parciales
 
@@ -73,7 +75,10 @@ En `cluster_paths.env`:
 
 ```bash
 export STEPS="masks_accumulated,masks_yearly,masks_total"   # solo máscaras
-# export STEPS="filter"                                     # solo filtrar
+export STEPS="filter"                                       # LULC + temporal (requiere máscaras)
+export STEPS="lulc_filter"                                  # solo LULC (legacy)
+export STEPS="temporal_first_burn"                          # solo temporal (legacy)
+export FILTER_NAME_CONTAINS=141228                          # opcional: limitar tiles en temporal
 ```
 
 ## 6. Si se queda sin memoria en login

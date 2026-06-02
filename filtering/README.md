@@ -11,7 +11,7 @@ Utilities that run after the burned-area classifier (see [../classification/READ
 A typical post-classification run chains these steps:
 
 1. **Build non-burnable masks** — use `create_accumulated_class_masks.py`, `create_yearly_masks.py` and `create_total_masks_by_year.py` to combine yearly land-cover layers into one binary mask per year (`1` = remove, `0` = keep).
-2. **Filter classified rasters** — run `filter_classified_parallel.py` to apply the year-matched mask to every classified GeoTIFF.
+2. **Filter classified rasters** — run `run_classified_filters.py` (or pipeline step `filter`) to apply LULC masks and temporal first-burn dedup in one step. Lower-level scripts: `filter_classified_parallel.py`, `filter_temporal_first_burn_year.py`.
 3. **Polygonize** — run `polygonize_mask_parallel.py` on filtered GeoTIFFs (one GeoPackage per input raster). Use the same CRS as your tiles (often geographic from the classifier until you reproject elsewhere for area-based work).
 4. **Summarize** — render region-grouped polygon-area histograms with `summarize_histograms_by_region.py` to inspect the distribution and pick a minimum-area threshold.
 5. **Apply thresholds** — drop small polygons with `filter_polygons_by_threshold.py` using the chosen minimum area.
@@ -33,6 +33,19 @@ Combines all accumulated masks from `create_accumulated_class_masks.py` with the
 
 ## Raster filtering
 
+### `run_classified_filters.py`
+Unified entry point: **LULC mask per year** then **temporal first-burn dedup** (2013 > 2014 > …). Wired as pipeline step `filter` in `run_filtering_pipeline.sh`.
+
+```bash
+python filtering/run_classified_filters.py \
+  --classified-dir .../classi_v2 \
+  --masks-dir .../mascaras/totales \
+  --output-dir .../classified_filtered \
+  --from-year 2013 --to-year 2025
+```
+
+Use `--lulc-only` or `--temporal-only` for partial reruns. Stats JSON: `--stats-json`.
+
 ### `filter_classified_parallel.py`
 Applies a year-specific binary mask (`1` = remove, `0` = keep) to every classified GeoTIFF in a directory. The script extracts the year from each tile's name with the regex `20\d{2}`, selects the matching yearly mask, reprojects if needed and writes filtered tiles plus a per-file JSON report. Parallelized across cores with `multiprocessing.Pool`.
 
@@ -49,7 +62,7 @@ python filtering/filter_temporal_first_burn_year.py \
   --from-year 2013 --to-year 2025 --spatial-merge
 ```
 
-Use `--no-spatial-merge` for pixel-only deduplication. `--name-contains 141228` limits processing to matching filenames. Wired as pipeline step `temporal_first_burn` in `run_filtering_pipeline.sh`.
+Use `--no-spatial-merge` for pixel-only deduplication. `--name-contains 141228` limits processing to matching filenames. Called from `run_classified_filters.py`; legacy pipeline step `temporal_first_burn`.
 
 ### `polygonize_mask_parallel.py`
 Converts the burned-area pixels (`mask value = 1` by default) of each filtered raster into polygons via `rasterio.features.shapes`, writing one GeoPackage per input. Connected mask pixels become connected polygons. Runs in parallel using `ProcessPoolExecutor`.

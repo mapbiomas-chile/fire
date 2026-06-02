@@ -11,12 +11,12 @@
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 
-# Filtrado por clases MapBiomas (rama feat/filtering_pipeline).
+# Filtrado post-clasificación (LULC + temporal) — rama feat/filtering_pipeline.
 #
 #   sbatch filtering/run_filtering_pipeline_slurm.sh
 #
-# Solo filtrar (máscaras ya generadas):
-#   sbatch filtering/run_filtering_pipeline_slurm.sh filter
+# Solo filtrar clasificados (máscaras ya generadas):
+#   sbatch filtering/run_filtering_pipeline_slurm.sh "" "" filter
 #
 # Args opcionales: [CLASSIFIED_DIR] [WORK_ROOT] [STEPS]
 
@@ -31,7 +31,7 @@ WORK_ROOT="${2:-}"
 STEPS="${3:-}"
 
 echo "============================================="
-echo "FILTRADO POR CLASES — NLHPC"
+echo "FILTRADO POST-CLASIFICACIÓN — NLHPC"
 echo "============================================="
 echo "Repo:     ${FIRE_REPO}"
 echo "Pipeline: ${PIPELINE_SCRIPT}"
