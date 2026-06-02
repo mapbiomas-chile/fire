@@ -39,8 +39,8 @@ Applies a year-specific binary mask (`1` = remove, `0` = keep) to every classifi
 ### `filter_temporal_first_burn_year.py`
 Run **after** `filter_classified_parallel.py` (input: `classified_filtered/`).
 
-1. **Same pixel:** burned in 2017–2019 → only **2017** keeps it.
-2. **Spatial merge (default):** pixels burned only in 2018 but **8-connected** to a 2017 scar are **added to 2017** and cleared from 2018 (dic–ene split).
+1. **Same pixel (default):** burned in 2017–2019 at the same cell → only **2017** keeps it (2013 > 2014 > …).
+2. **Spatial merge (optional):** pixels burned only in 2018 but **8-connected** to a 2017 scar are **added to 2017** and cleared from 2018 (`TEMPORAL_SPATIAL_MERGE=1`).
 
 ```bash
 python filtering/filter_temporal_first_burn_year.py \
