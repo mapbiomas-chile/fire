@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
-# =============================================================================
 # MapBiomas Fire — pipeline de filtrado post-clasificación
-#
-# Leftraru (interactivo, sin sbatch):
-#   cd ~/fire && git checkout feat/filtering_pipeline
-#   bash filtering/run_filtering_pipeline.sh
-#
-# Opcional: filtering/cluster_paths.env sobreescribe las rutas por defecto.
-# Cola SLURM: sbatch filtering/run_filtering_pipeline_slurm.sh
-#
-# STEPS (all): masks_accumulated, masks_yearly, masks_total, filter
-#   filter = LULC + temporal first-burn (un solo paso)
-# Pasos legacy (re-ejecución parcial): lulc_filter, temporal_first_burn
-# =============================================================================
+# Documentación: filtering/README.md
+# Leftraru interactivo: bash filtering/run_filtering_pipeline.sh
+# SLURM: sbatch filtering/run_filtering_pipeline_slurm.sh
 
 set -euo pipefail
 

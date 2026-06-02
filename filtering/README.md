@@ -1,78 +1,204 @@
 # Filtering
 
-**Leftraru interactivo (sin sbatch):** [LOCAL.md](LOCAL.md) — `cluster_paths.leftraru.env.example` → `cluster_paths.env`, luego `bash filtering/run_filtering_pipeline.sh`.
+Post-clasificación MapBiomas Fire: máscaras LULC, filtrado de rasters clasificados, deduplicación temporal, polygonize y estadísticas de polígonos.
 
-**Cola SLURM (NLHPC):** [CLUSTER.md](CLUSTER.md) — `sbatch filtering/run_filtering_pipeline_slurm.sh`.
+Entrada típica: GeoTIFFs del clasificador ([`../classification/`](../classification/README.md)).  
+Salida filtrada: rasters listos para polygonize o validación ([`../validation/`](../validation/README.md)).
 
-Utilities that run after the burned-area classifier (see [../classification/README.md](../classification/README.md)). The goal of this stage is to turn raw classified rasters into clean, analysis-ready products: per-year masks of non-burnable classes, filtered rasters, polygonized fire scars and summary statistics used to pick filtering thresholds.
+---
 
-## Suggested pipeline
+## Índice de archivos
 
-A typical post-classification run chains these steps:
+| Archivo | Rol | ¿Cuándo usarlo? |
+|---------|-----|-----------------|
+| **`run_filtering_pipeline.sh`** | Orquestación bash (máscaras + filtrado) | Ejecución habitual en leftraru o local |
+| **`run_filtering_pipeline_slurm.sh`** | Wrapper SLURM → pipeline bash | Job en cola NLHPC |
+| **`cluster_paths.env.example`** | Plantilla de rutas y variables | Copiar a `cluster_paths.env` (no commitear) |
+| **`run_classified_filters.py`** | LULC + temporal en un solo comando | Paso `filter` del pipeline; también manual |
+| **`create_accumulated_class_masks.py`** | Máscaras acumuladas (clases fijas) | Paso `masks_accumulated` |
+| **`create_yearly_masks.py`** | Máscaras anuales (río, infra, agri, pastura) | Paso `masks_yearly` |
+| **`create_total_masks_by_year.py`** | `mascara_total_<year>.tif` | Paso `masks_total` |
+| **`filter_classified_parallel.py`** | Aplica máscara LULC por año | Llamado por `run_classified_filters.py`; `--lulc-only` |
+| **`filter_temporal_first_burn_year.py`** | Prioridad 2013 > 2014 > … por píxel | Llamado por `run_classified_filters.py`; `--temporal-only` |
+| **`polygonize_mask_parallel.py`** | Raster → polígonos (GPKG) | Después del filtrado; usado en validación |
+| **`summarize_histograms_by_region.py`** | Histogramas de área por región | Elegir umbral mínimo de polígono |
+| **`filter_polygons_by_threshold.py`** | Filtra polígonos por área mínima (ha) | Tras elegir umbral |
+| [LOCAL.md](LOCAL.md) | Guía interactiva leftraru (sin sbatch) | SSH en nodo login |
+| [CLUSTER.md](CLUSTER.md) | Guía SLURM NLHPC | `sbatch` |
 
-1. **Build non-burnable masks** — use `create_accumulated_class_masks.py`, `create_yearly_masks.py` and `create_total_masks_by_year.py` to combine yearly land-cover layers into one binary mask per year (`1` = remove, `0` = keep).
-2. **Filter classified rasters** — run `run_classified_filters.py` (or pipeline step `filter`) to apply LULC masks and temporal first-burn dedup in one step. Lower-level scripts: `filter_classified_parallel.py`, `filter_temporal_first_burn_year.py`.
-3. **Polygonize** — run `polygonize_mask_parallel.py` on filtered GeoTIFFs (one GeoPackage per input raster). Use the same CRS as your tiles (often geographic from the classifier until you reproject elsewhere for area-based work).
-4. **Summarize** — render region-grouped polygon-area histograms with `summarize_histograms_by_region.py` to inspect the distribution and pick a minimum-area threshold.
-5. **Apply thresholds** — drop small polygons with `filter_polygons_by_threshold.py` using the chosen minimum area.
+No hay otros scripts en este directorio: todo lo listado arriba está en uso.
 
-For optional **equal-area reprojection** of classified tiles or **yearly mosaics** before polygonize / validation against reference vectors, see [../validation/README.md](../validation/README.md) (`reproject_raster_to_equal_area.py`, `merge_reprojected_tiles_by_year.py`).
+---
 
-Auxiliary scripts (GEE downloads, tile listing, and metadata inspection) support the steps above and can be used standalone.
+## Flujo de trabajo
 
-## Mask building
+```mermaid
+flowchart LR
+  subgraph pipeline ["Pipeline bash (STEPS=all)"]
+    A[LULC stack] --> B[masks_accumulated]
+    A --> C[masks_yearly]
+    B --> D[masks_total]
+    C --> D
+    E[Classified tiles] --> F[filter]
+    D --> F
+    F --> G[classified_filtered]
+  end
+  subgraph optional ["Pasos manuales opcionales"]
+    G --> H[polygonize]
+    H --> I[summarize histograms]
+    I --> J[filter by threshold]
+  end
+  J --> K[validation]
+```
 
-### `create_accumulated_class_masks.py`
-For a selected land-cover class, produces one accumulated mask by OR-ing the class across all bands (years) of the input raster. The hard-coded `CLASS_SPECS` list covers rocky outcrop (`29`), sand/beach/dune (`23`), salt flat (`61`), ice/snow (`34`) and other non-vegetated areas (`25`), each written to a fixed `mascara_<name>_acumulado.tif` filename.
+### A. Pipeline automatizado (`run_filtering_pipeline.sh`)
 
-### `create_yearly_masks.py`
-Writes one binary mask per year for each of these MapBiomas-style classes (read from the corresponding band of the input multi-year stack): river/lake **rio_lago** (`33`), **infraestructura** (`24`), **agricultura** (`15`) and **pastura** (`18`). Outputs use the filenames expected by `create_total_masks_by_year.py` (`mascara_<class>_<year>.tif`). Parallelizes by calendar year with `--workers` (one process per year by default: `cpu_count - 1`).
+| Paso `STEPS` | Script | Salida |
+|--------------|--------|--------|
+| `masks_accumulated` | `create_accumulated_class_masks.py` | `mascaras/acumuladas/mascara_*_acumulado.tif` |
+| `masks_yearly` | `create_yearly_masks.py` | `mascaras/by_year/mascara_<clase>_<year>.tif` |
+| `masks_total` | `create_total_masks_by_year.py` | `mascaras/totales/mascara_total_<year>.tif` |
+| **`filter`** | **`run_classified_filters.py`** | **`classified_filtered/`** (LULC + temporal) |
 
-### `create_total_masks_by_year.py`
-Combines all accumulated masks from `create_accumulated_class_masks.py` with the yearly thematic masks from `create_yearly_masks.py` (río/lago, infraestructura, agricultura, pastura) into one `mascara_total_<year>.tif` per year. The output is consumed by `filter_classified_parallel.py`. For a split directory tree, use `--mascaras-root` (`acumuladas/`, `by_year/`, `totales/`) and `--workers` to parallelize by year.
+Pasos legacy (re-ejecución parcial): `lulc_filter`, `temporal_first_burn`.
 
-## Raster filtering
+**Ejecución:**
 
-### `run_classified_filters.py`
-Unified entry point: **LULC mask per year** then **temporal first-burn dedup** (2013 > 2014 > …). Wired as pipeline step `filter` in `run_filtering_pipeline.sh`.
+```bash
+cd ~/fire
+cp filtering/cluster_paths.env.example filtering/cluster_paths.env   # opcional
+bash filtering/run_filtering_pipeline.sh
+```
+
+SLURM: ver [CLUSTER.md](CLUSTER.md). Interactivo leftraru: [LOCAL.md](LOCAL.md).
+
+**Variables clave** (en `cluster_paths.env` o export):
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `LULC_STACK` | stack multibanda `.tif` | Una banda = un año MapBiomas |
+| `CLASSIFIED_DIR` | tiles clasificados | Entrada del clasificador |
+| `WORK_ROOT` | `filtering_work_local` | Raíz de salidas |
+| `FILTER_OUTPUT_DIR` | `$WORK_ROOT/classified_filtered` | Salida final del filtrado |
+| `STEPS` | `all` | Pasos a ejecutar (coma-separados) |
+| `FROM_YEAR` / `TO_YEAR` | 2013–2025 | Años de máscaras y clasificados |
+| `LULC_TO_YEAR` | 2024 | Último año con banda LULC real |
+| `COPY_MASK_2025_FROM_2024` | 1 | Copia máscaras 2024→2025 si no hay banda 2025 |
+| `KEEP_LULC_INTERMEDIATE` | 0 | Conservar `classified_lulc_only/` |
+| `FILTER_NAME_CONTAINS` | *(vacío)* | Limitar temporal a filenames (ej. tile piloto) |
+| `TEMPORAL_SPATIAL_MERGE` | 0 | 1 = fusionar vecinos 8-conectados al año origen |
+
+**Estructura de salida:**
+
+```
+${WORK_ROOT}/
+├── mascaras/
+│   ├── acumuladas/
+│   ├── by_year/
+│   └── totales/
+├── classified_filtered/     ← salida final (LULC + temporal)
+├── classified_lulc_only/    ← solo si KEEP_LULC_INTERMEDIATE=1
+└── logs/filter_stats.json
+```
+
+### B. Filtrado unificado (`run_classified_filters.py`)
+
+Aplica en secuencia:
+
+1. **LULC** — quita píxeles en clases no quemables (`filter_classified_parallel.py`).
+2. **Temporal** — mismo píxel en varios años → gana el primero (`filter_temporal_first_burn_year.py`).
 
 ```bash
 python filtering/run_classified_filters.py \
-  --classified-dir .../classi_v2 \
-  --masks-dir .../mascaras/totales \
-  --output-dir .../classified_filtered \
-  --from-year 2013 --to-year 2025
+  --classified-dir /path/to/classi_v2 \
+  --masks-dir /path/to/mascaras/totales \
+  --output-dir /path/to/classified_filtered \
+  --from-year 2013 --to-year 2025 \
+  --stats-json /path/to/logs/filter_stats.json
 ```
 
-Use `--lulc-only` or `--temporal-only` for partial reruns. Stats JSON: `--stats-json`.
+Flags útiles: `--lulc-only`, `--temporal-only`, `--no-spatial-merge`, `--name-contains 141228`.
 
-### `filter_classified_parallel.py`
-Applies a year-specific binary mask (`1` = remove, `0` = keep) to every classified GeoTIFF in a directory. The script extracts the year from each tile's name with the regex `20\d{2}`, selects the matching yearly mask, reprojects if needed and writes filtered tiles plus a per-file JSON report. Parallelized across cores with `multiprocessing.Pool`.
+### C. Polygonize y umbral de área (manual)
 
-### `filter_temporal_first_burn_year.py`
-Run **after** `filter_classified_parallel.py` (input: `classified_filtered/`).
+No forman parte del pipeline bash; se corren cuando necesitas polígonos o validación.
 
-1. **Same pixel (default):** burned in 2017–2019 at the same cell → only **2017** keeps it (2013 > 2014 > …).
-2. **Spatial merge (optional):** pixels burned only in 2018 but **8-connected** to a 2017 scar are **added to 2017** and cleared from 2018 (`TEMPORAL_SPATIAL_MERGE=1`).
+**1. Polygonize** — un GPKG por raster:
 
 ```bash
-python filtering/filter_temporal_first_burn_year.py \
-  --input-dir .../classified_filtered \
-  --output-dir .../classified_first_burn \
-  --from-year 2013 --to-year 2025 --spatial-merge
+python filtering/polygonize_mask_parallel.py \
+  --input-dir /path/to/classified_filtered \
+  --output-dir /path/to/polygons \
+  --mask-value 1 --workers 4
 ```
 
-Use `--no-spatial-merge` for pixel-only deduplication. `--name-contains 141228` limits processing to matching filenames. Called from `run_classified_filters.py`; legacy pipeline step `temporal_first_burn`.
+**2. Histogramas** — inspeccionar distribución de áreas:
 
-### `polygonize_mask_parallel.py`
-Converts the burned-area pixels (`mask value = 1` by default) of each filtered raster into polygons via `rasterio.features.shapes`, writing one GeoPackage per input. Connected mask pixels become connected polygons. Runs in parallel using `ProcessPoolExecutor`.
+```bash
+python filtering/summarize_histograms_by_region.py \
+  --input-dir /path/to/polygons \
+  --output-dir /path/to/histograms
+```
 
-## Statistics
+**3. Umbral** — polígonos ≥ N hectáreas:
 
-### `summarize_histograms_by_region.py`
-Groups polygon files by region code extracted from the filename (`rX`) and writes one histogram per file under `region_<X>/histogramas/`. Only regions `1`, `2`, `4` and `6` are rendered.
+```bash
+python filtering/filter_polygons_by_threshold.py \
+  --input-dir /path/to/polygons \
+  --output-gpkg /path/to/polygons_filtered.gpkg \
+  --threshold-ha 10
+```
 
-## Thresholding
+Para validación con cicatrices de referencia: reproyectar a CRS de área igual ([`../validation/`](../validation/README.md)) y luego `intersect_top_n_scars_with_classified.py`.
 
-### `filter_polygons_by_threshold.py`
-Reads polygon GeoPackages and keeps only polygons larger than the selected minimum area (in hectares). Produces a single merged GeoPackage with the surviving polygons.
+---
+
+## Referencia por script
+
+### Construcción de máscaras
+
+**`create_accumulated_class_masks.py`** — OR de clases fijas en todas las bandas del stack LULC: roca (`29`), arena (`23`), salar (`61`), hielo (`34`), sin vegetación (`25`). Salida: `mascara_<nombre>_acumulado.tif`.
+
+**`create_yearly_masks.py`** — Por año: río/lago (`33`), infraestructura (`24`), agricultura (`15`), pastura (`18`). Salida: `mascara_<clase>_<year>.tif`. Paraleliza por año (`--workers`).
+
+**`create_total_masks_by_year.py`** — Combina acumuladas + anuales en `mascara_total_<year>.tif` (`1` = quitar, `0` = mantener). Input de `filter_classified_parallel.py`.
+
+### Filtrado de rasters
+
+**`filter_classified_parallel.py`** — Por tile: extrae año del nombre (`20xx`), alinea `mascara_total_<year>.tif`, escribe `*_filtered_<timestamp>.tif` + JSON de resumen.
+
+**`filter_temporal_first_burn_year.py`** — Agrupa tiles por región (año en token índice 3, p. ej. `b14_chile_r1_2013_...`). Por píxel: 2013 > 2014 > …. Salida `uint8` 0/1 con sufijo `_first_burn_year` (configurable).
+
+### Polígonos y estadísticas
+
+**`polygonize_mask_parallel.py`** — `rasterio.features.shapes` sobre píxeles = 1. Salida: `*_mask1.gpkg`.
+
+**`summarize_histograms_by_region.py`** — Histogramas por archivo, carpetas `region_<X>/histogramas/`. Regiones: 1, 2, 4, 6.
+
+**`filter_polygons_by_threshold.py`** — Filtra por `--threshold-ha`; exporta un GPKG unificado.
+
+---
+
+## Dependencias
+
+| Scripts | Paquetes Python |
+|---------|-----------------|
+| Pipeline máscaras + filtrado | `numpy`, `rasterio` |
+| Polygonize + umbral | `geopandas` |
+| Histogramas | `geopandas`, `matplotlib` |
+
+Ambiente cluster: `mb_fuego` (Conda). GDAL del sistema vía rasterio.
+
+---
+
+## Convención de nombres
+
+Tiles MapBiomas esperados:
+
+```text
+b14_chile_r1_2013_cog_classified_filtered_20260512_130913.tif
+              ^^^^
+              token índice 3 = año calendario
+```
+
+Tras filtrado temporal: sufijo `_first_burn_year` en el stem de salida.

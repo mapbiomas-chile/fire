@@ -11,14 +11,8 @@
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 
-# Filtrado post-clasificación (LULC + temporal) — rama feat/filtering_pipeline.
-#
-#   sbatch filtering/run_filtering_pipeline_slurm.sh
-#
-# Solo filtrar clasificados (máscaras ya generadas):
-#   sbatch filtering/run_filtering_pipeline_slurm.sh "" "" filter
-#
-# Args opcionales: [CLASSIFIED_DIR] [WORK_ROOT] [STEPS]
+# Filtrado post-clasificación — SLURM NLHPC
+# Documentación: filtering/README.md | filtering/CLUSTER.md
 
 export OMP_NUM_THREADS=22
 
