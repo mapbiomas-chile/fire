@@ -1,37 +1,45 @@
 #!/usr/bin/env bash
 # MapBiomas Fire — pipeline de filtrado post-clasificación
 # Documentación: filtering/README.md
-# Leftraru interactivo: bash filtering/run_filtering_pipeline.sh
-# SLURM: sbatch filtering/run_filtering_pipeline_slurm.sh
+#
+# Configuración (obligatoria): copiar y editar cluster_paths.env, luego:
+#   source filtering/cluster_paths.env
+#   bash filtering/run_filtering_pipeline.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+PATHS_FILE="${SCRIPT_DIR}/cluster_paths.env"
 
-if [[ -f "${SCRIPT_DIR}/cluster_paths.env" ]]; then
+if [[ -f "${PATHS_FILE}" ]]; then
   # shellcheck source=/dev/null
-  source "${SCRIPT_DIR}/cluster_paths.env"
+  source "${PATHS_FILE}"
 fi
 
-# --- Rutas por defecto (leftraru / flepin) — override con cluster_paths.env ---
-PYTHON="${PYTHON:-/home/flepin/.conda/envs/mb_fuego/bin/python}"
-LULC_STACK="${LULC_STACK:-/home/flepin/lulc_collection02/lulc_2025_subset_mosaic_bbox_without_region5.tif}"
-CLASSIFIED_DIR="${CLASSIFIED_DIR:-/home/flepin/classification_20260528}"
-WORK_ROOT="${WORK_ROOT:-/home/flepin/filtering_work_local}"
+# --- Rutas y runtime (sin defaults personales; definir en cluster_paths.env o export) ---
+PYTHON="${PYTHON:-}"
+if [[ -z "${PYTHON}" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON="$(command -v python)"
+  fi
+fi
+
+LULC_STACK="${LULC_STACK:-}"
+CLASSIFIED_DIR="${CLASSIFIED_DIR:-}"
+WORK_ROOT="${WORK_ROOT:-}"
 
 MASCARAS_ROOT="${MASCARAS_ROOT:-${WORK_ROOT}/mascaras}"
 ACCUMULATED_DIR="${ACCUMULATED_DIR:-${MASCARAS_ROOT}/acumuladas}"
 YEARLY_MASKS_DIR="${YEARLY_MASKS_DIR:-${MASCARAS_ROOT}/by_year}"
 TOTAL_MASKS_DIR="${TOTAL_MASKS_DIR:-${MASCARAS_ROOT}/totales}"
 
-# Salida final del filtrado (LULC + temporal)
 FILTER_OUTPUT_DIR="${FILTER_OUTPUT_DIR:-${WORK_ROOT}/classified_filtered}"
-# Intermedio LULC (solo si KEEP_LULC_INTERMEDIATE=1 o paso lulc_filter)
 LULC_INTERMEDIATE_DIR="${LULC_INTERMEDIATE_DIR:-${WORK_ROOT}/classified_lulc_only}"
 KEEP_LULC_INTERMEDIATE="${KEEP_LULC_INTERMEDIATE:-0}"
 
-# Compatibilidad con nombres anteriores
 FILTERED_DIR="${FILTERED_DIR:-${LULC_INTERMEDIATE_DIR}}"
 FIRST_BURN_DIR="${FIRST_BURN_DIR:-${FILTER_OUTPUT_DIR}}"
 
@@ -52,7 +60,17 @@ STEPS="${STEPS:-all}"
 
 DEFAULT_STEPS="masks_accumulated,masks_yearly,masks_total,filter"
 
+CONFIG_HINT="Set variables in ${PATHS_FILE} (copy from cluster_paths.env.example) or export them before running."
+
 log() { echo "[$(date -Iseconds)] $*"; }
+
+require_var() {
+  local name="$1"
+  if [[ -z "${!name:-}" ]]; then
+    echo "ERROR: ${name} is not set. ${CONFIG_HINT}" >&2
+    exit 1
+  fi
+}
 
 step_enabled() {
   local name="$1"
@@ -61,6 +79,18 @@ step_enabled() {
     return
   fi
   [[ ",${STEPS}," == *",${name},"* ]]
+}
+
+steps_need_masks() {
+  step_enabled "masks_accumulated" || step_enabled "masks_yearly" || step_enabled "masks_total"
+}
+
+steps_need_classified() {
+  step_enabled "filter" || step_enabled "lulc_filter"
+}
+
+steps_need_raw_classified_dir() {
+  steps_need_classified
 }
 
 run_py() {
@@ -140,14 +170,40 @@ run_unified_filter() {
   run_py "${FILTER_ARGS[@]}"
 }
 
-if [[ ! -e "${LULC_STACK}" ]]; then
-  echo "ERROR: LULC_STACK not found: ${LULC_STACK}" >&2
+# --- Validar configuración según STEPS ---
+require_var PYTHON
+if [[ ! -x "${PYTHON}" && ! -f "${PYTHON}" ]]; then
+  echo "ERROR: PYTHON not found or not executable: ${PYTHON}" >&2
   exit 1
 fi
 
-if step_enabled "filter" || step_enabled "lulc_filter"; then
-  if [[ ! -d "${CLASSIFIED_DIR}" ]]; then
-    echo "ERROR: CLASSIFIED_DIR not found: ${CLASSIFIED_DIR}" >&2
+require_var WORK_ROOT
+
+if steps_need_masks; then
+  require_var LULC_STACK
+fi
+
+if steps_need_raw_classified_dir; then
+  require_var CLASSIFIED_DIR
+fi
+
+if step_enabled "filter" && [[ ! -d "${TOTAL_MASKS_DIR}" ]]; then
+  echo "ERROR: Masks dir not found (run mask steps first): ${TOTAL_MASKS_DIR}" >&2
+  exit 1
+fi
+
+if steps_need_raw_classified_dir && [[ ! -d "${CLASSIFIED_DIR}" ]]; then
+  echo "ERROR: CLASSIFIED_DIR not found: ${CLASSIFIED_DIR}" >&2
+  exit 1
+fi
+
+if steps_need_masks; then
+  if [[ ! -e "${LULC_STACK}" ]]; then
+    echo "ERROR: LULC_STACK not found: ${LULC_STACK}" >&2
+    exit 1
+  fi
+  if [[ "${LULC_STACK}" == *.vrt || "${LULC_STACK}" == *.VRT ]]; then
+    echo "ERROR: LULC_STACK must be a single GeoTIFF (.tif), not VRT: ${LULC_STACK}" >&2
     exit 1
   fi
 fi
@@ -156,16 +212,19 @@ mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL
 cd "${REPO_ROOT}"
 
 log "REPO_ROOT=${REPO_ROOT}"
-if [[ "${LULC_STACK}" == *.vrt || "${LULC_STACK}" == *.VRT ]]; then
-  echo "ERROR: LULC_STACK must be a single GeoTIFF (.tif), not VRT: ${LULC_STACK}" >&2
-  exit 1
+log "PYTHON=${PYTHON}"
+if steps_need_masks; then
+  log "LULC_STACK=${LULC_STACK} (band 1 = ${START_YEAR_BAND1})"
 fi
-log "LULC_STACK=${LULC_STACK} (band 1 = ${START_YEAR_BAND1})"
-log "CLASSIFIED_DIR=${CLASSIFIED_DIR}"
+if [[ -n "${CLASSIFIED_DIR}" ]]; then
+  log "CLASSIFIED_DIR=${CLASSIFIED_DIR}"
+fi
 log "WORK_ROOT=${WORK_ROOT}"
 log "FILTER_OUTPUT_DIR=${FILTER_OUTPUT_DIR}"
 log "STEPS=${STEPS}"
-log "LULC mask years: ${FROM_YEAR}-${LULC_TO_YEAR} | Filter/classified years: ${FROM_YEAR}-${TO_YEAR}"
+if steps_need_masks; then
+  log "LULC mask years: ${FROM_YEAR}-${LULC_TO_YEAR} | Filter/classified years: ${FROM_YEAR}-${TO_YEAR}"
+fi
 
 if step_enabled "masks_accumulated"; then
   log "=== Step 1a: accumulated class masks ==="

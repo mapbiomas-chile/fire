@@ -204,6 +204,27 @@ Cuando las máscaras y los clasificados ya están en disco, puedes ejecutar **to
 | `run_filtering_pipeline_slurm.sh` | Wrapper SLURM para NLHPC |
 | `cluster_paths.env.example` | Plantilla de rutas → copiar a `cluster_paths.env` |
 
+### Configuración (obligatoria, portable entre usuarios)
+
+El pipeline **no incluye rutas personales** en el código. Cada persona define sus paths en un archivo local (no se commitea):
+
+```bash
+cp filtering/cluster_paths.env.example filtering/cluster_paths.env
+# Editar: PYTHON, LULC_STACK, CLASSIFIED_DIR, WORK_ROOT
+source filtering/cluster_paths.env
+bash filtering/run_filtering_pipeline.sh
+```
+
+| Variable | Obligatoria cuando | Descripción |
+|----------|-------------------|-------------|
+| `PYTHON` | Siempre | Intérprete con `numpy` + `rasterio` |
+| `WORK_ROOT` | Siempre | Raíz de salidas (máscaras + filtrados) |
+| `LULC_STACK` | Pasos de máscaras (`masks_*`) | GeoTIFF multibanda MapBiomas |
+| `CLASSIFIED_DIR` | Paso `filter` o `lulc_filter` | Clasificados en bruto |
+| `STEPS` | Opcional (default `all`) | Pasos a ejecutar |
+
+El resto (`FROM_YEAR`, `WORKERS`, `FILTER_OUTPUT_DIR`, etc.) tiene defaults razonables en `cluster_paths.env.example`.
+
 ### Pasos del pipeline (`STEPS`)
 
 | `STEPS` | Equivale a | Script |
@@ -216,22 +237,21 @@ Cuando las máscaras y los clasificados ya están en disco, puedes ejecutar **to
 Legacy (re-ejecución parcial): `lulc_filter` (solo § 2), `temporal_first_burn` (solo § 3).
 
 ```bash
-cd ~/fire
-cp filtering/cluster_paths.env.example filtering/cluster_paths.env   # opcional
-bash filtering/run_filtering_pipeline.sh                             # STEPS=all
+cd /path/to/fire
+cp filtering/cluster_paths.env.example filtering/cluster_paths.env
+# editar rutas, luego:
+source filtering/cluster_paths.env
+bash filtering/run_filtering_pipeline.sh
 ```
 
 - **Leftraru interactivo (sin sbatch):** [LOCAL.md](LOCAL.md)
 - **Cola SLURM:** [CLUSTER.md](CLUSTER.md)
 
-### Variables de entorno
+### Otras variables (opcionales)
 
 | Variable | Descripción |
 |----------|-------------|
-| `LULC_STACK` | GeoTIFF multibanda MapBiomas |
-| `CLASSIFIED_DIR` | Tiles clasificados de entrada |
-| `WORK_ROOT` | Raíz de salidas |
-| `FILTER_OUTPUT_DIR` | Salida final (§ 2 + § 3) → `classified_filtered/` |
+| `FILTER_OUTPUT_DIR` | Salida final (default: `$WORK_ROOT/classified_filtered`) |
 | `FROM_YEAR` / `TO_YEAR` | Rango de años (default 2013–2025) |
 | `LULC_TO_YEAR` | Último año con banda LULC real (default 2024) |
 | `KEEP_LULC_INTERMEDIATE` | 1 = conservar salida intermedia del § 2 |
@@ -276,7 +296,7 @@ Tras § 3: `..._filtered_<timestamp>_first_burn_year.tif`
 | § 4 polygonize + umbral | `geopandas` |
 | § 4 histogramas | `geopandas`, `matplotlib` |
 
-Ambiente cluster: Conda `mb_fuego`.
+Ambiente típico: Conda `mb_fuego` (u otro env; definir ruta en `PYTHON`).
 
 ---
 

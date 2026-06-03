@@ -1,15 +1,14 @@
 # NLHPC — ejecución con SLURM
 
-Guía para enviar el pipeline a la cola.  
-Índice de scripts y flujo completo: [README.md](README.md).
+Guía para la cola. Detalle del flujo: [README.md](README.md).
 
 ## Checklist
 
-- [ ] Repo en `~/fire`, rama `feat/filtering_pipeline`
-- [ ] `filtering/cluster_paths.env` desde `cluster_paths.env.example`
+- [ ] Repo clonado en tu `$HOME` (o ruta en `REPO_ROOT`)
+- [ ] `filtering/cluster_paths.env` creado desde `cluster_paths.env.example`
+- [ ] `PYTHON`, `LULC_STACK`, `CLASSIFIED_DIR`, `WORK_ROOT` editados con **tus** rutas
 - [ ] `LULC_STACK` es GeoTIFF (`.tif`), no `.vrt`
-- [ ] `CLASSIFIED_DIR` con tiles clasificados
-- [ ] Conda `mb_fuego` con `numpy`, `rasterio`
+- [ ] Correo en `#SBATCH --mail-user` de `run_filtering_pipeline_slurm.sh` (opcional)
 - [ ] `~/logs` existe
 
 ## Configuración
@@ -17,7 +16,7 @@ Guía para enviar el pipeline a la cola.
 ```bash
 cd ~/fire
 cp filtering/cluster_paths.env.example filtering/cluster_paths.env
-# editar rutas si hace falta
+nano filtering/cluster_paths.env
 ```
 
 ## Ejecutar
@@ -26,19 +25,19 @@ cp filtering/cluster_paths.env.example filtering/cluster_paths.env
 cd ~/fire
 sbatch filtering/run_filtering_pipeline_slurm.sh
 
-# Solo filtrado (máscaras ya generadas):
-sbatch filtering/run_filtering_pipeline_slurm.sh "" "" filter
+# Solo filtrado (máscaras ya generadas); opcional: override rutas en la línea de comando:
+sbatch filtering/run_filtering_pipeline_slurm.sh /path/to/classified /path/to/work filter
 ```
 
 Logs: `~/logs/fire_class_filter_<JOBID>.out` / `.err`
 
 ## Pasos del pipeline
 
-| `STEPS` | Script |
-|---------|--------|
-| `masks_accumulated` | `create_accumulated_class_masks.py` |
-| `masks_yearly` | `create_yearly_masks.py` |
-| `masks_total` | `create_total_masks_by_year.py` |
-| `filter` | `run_classified_filters.py` (LULC + temporal) |
+| `STEPS` | Qué hace |
+|---------|----------|
+| `masks_accumulated` | Máscaras acumuladas |
+| `masks_yearly` | Máscaras anuales |
+| `masks_total` | `mascara_total_<year>.tif` |
+| `filter` | LULC + temporal |
 
-`STEPS=all` ejecuta los cuatro. Polygonize y umbral de área son pasos manuales aparte (ver [README.md](README.md)).
+`STEPS=all` ejecuta los cuatro. Polygonize y umbral: [README.md](README.md) § 4.
