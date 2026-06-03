@@ -31,9 +31,34 @@ def burn_mask(data: np.ndarray, burn_value: int, nodata: float | None) -> np.nda
     return mask
 
 
+def fill_holes_limited(mask: np.ndarray, max_hole_area: int | None) -> np.ndarray:
+    """
+    Fill enclosed background pixels inside the burn mask.
+
+    If max_hole_area is set (>0), only holes with at most that many pixels are filled.
+    Outer boundary is unchanged in all cases.
+    """
+    if max_hole_area is None or max_hole_area <= 0:
+        return ndimage.binary_fill_holes(mask)
+
+    fully_filled = ndimage.binary_fill_holes(mask)
+    added = fully_filled & ~mask
+    if not np.any(added):
+        return mask.copy()
+
+    labeled, n = ndimage.label(added)
+    refined = mask.copy()
+    for label_id in range(1, n + 1):
+        component = labeled == label_id
+        if int(component.sum()) <= max_hole_area:
+            refined[component] = True
+    return refined
+
+
 def apply_refine(
     mask: np.ndarray,
     method: str,
+    max_hole_area: int | None,
     closing_size: int,
     iterations: int,
 ) -> np.ndarray:
@@ -46,7 +71,7 @@ def apply_refine(
 
     refined = mask.astype(bool)
     if method in ("fill_holes", "both"):
-        refined = ndimage.binary_fill_holes(refined)
+        refined = fill_holes_limited(refined, max_hole_area)
     if method in ("closing", "both"):
         structure = np.ones((closing_size, closing_size), dtype=bool)
         for _ in range(iterations):
@@ -78,6 +103,7 @@ def refine_one_file(args: tuple) -> dict:
         burn_value,
         fill_value,
         method,
+        max_hole_area,
         closing_size,
         iterations,
         output_stem_suffix,
@@ -92,7 +118,7 @@ def refine_one_file(args: tuple) -> dict:
         nodata = src.nodata
 
     mask = burn_mask(data, burn_value, nodata)
-    refined = apply_refine(mask, method, closing_size, iterations)
+    refined = apply_refine(mask, method, max_hole_area, closing_size, iterations)
     out = np.full(refined.shape, fill_value, dtype=np.uint8)
     out[refined] = np.uint8(burn_value)
 
@@ -115,6 +141,7 @@ def refine_one_file(args: tuple) -> dict:
         "input_file": str(tif_path),
         "output_file": str(out_path),
         "method": method,
+        "max_hole_area": max_hole_area,
         "closing_size": closing_size,
         "iterations": iterations,
         "pixels_burned_before": pixels_before,
@@ -169,6 +196,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--max-hole-area",
+        type=int,
+        default=16,
+        help=(
+            "For fill_holes/both: max enclosed hole size in pixels to fill "
+            "(default: 16 ≈ 4x4). Use 0 for unlimited (aggressive)."
+        ),
+    )
+    parser.add_argument(
         "--closing-size",
         type=int,
         default=2,
@@ -202,6 +238,8 @@ def main() -> int:
             msg += f" (name contains {args.name_contains!r})"
         raise RuntimeError(msg)
 
+    max_hole_area = None if args.max_hole_area <= 0 else args.max_hole_area
+
     tasks = [
         (
             str(p),
@@ -210,6 +248,7 @@ def main() -> int:
             args.burn_value,
             args.fill_value,
             args.method,
+            max_hole_area,
             args.closing_size,
             args.iterations,
             args.output_stem_suffix,
@@ -219,6 +258,11 @@ def main() -> int:
 
     workers = min(args.workers, len(tasks))
     print(f"[INFO] Files: {len(tasks)} | method={args.method}", flush=True)
+    if args.method in ("fill_holes", "both"):
+        if max_hole_area is None:
+            print("[INFO] fill_holes: unlimited (all enclosed holes)", flush=True)
+        else:
+            print(f"[INFO] fill_holes: max hole area = {max_hole_area} px", flush=True)
     if args.method in ("closing", "both"):
         print(
             f"[INFO] Closing: {args.closing_size}x{args.closing_size} x{args.iterations}",
@@ -244,6 +288,7 @@ def main() -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         summary = {
             "method": args.method,
+            "max_hole_area": max_hole_area,
             "closing_size": args.closing_size,
             "iterations": args.iterations,
             "n_files": len(results),

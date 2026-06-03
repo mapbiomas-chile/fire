@@ -21,6 +21,7 @@ _preserve_PYTHON="${PYTHON:-}"
 _preserve_WORK_ROOT="${WORK_ROOT:-}"
 _preserve_REFINE_INPUT_DIR="${REFINE_INPUT_DIR:-}"
 _preserve_REFINE_OUTPUT_DIR="${REFINE_OUTPUT_DIR:-}"
+_preserve_MAX_HOLE_AREA="${MAX_HOLE_AREA:-}"
 _preserve_REFINE_METHOD="${REFINE_METHOD:-}"
 _preserve_CLOSING_SIZE="${CLOSING_SIZE:-}"
 _preserve_CLOSING_ITERATIONS="${CLOSING_ITERATIONS:-}"
@@ -37,6 +38,7 @@ fi
 [[ -n "${_preserve_WORK_ROOT}" ]] && WORK_ROOT="${_preserve_WORK_ROOT}"
 [[ -n "${_preserve_REFINE_INPUT_DIR}" ]] && REFINE_INPUT_DIR="${_preserve_REFINE_INPUT_DIR}"
 [[ -n "${_preserve_REFINE_OUTPUT_DIR}" ]] && REFINE_OUTPUT_DIR="${_preserve_REFINE_OUTPUT_DIR}"
+[[ -n "${_preserve_MAX_HOLE_AREA}" ]] && MAX_HOLE_AREA="${_preserve_MAX_HOLE_AREA}"
 [[ -n "${_preserve_REFINE_METHOD}" ]] && REFINE_METHOD="${_preserve_REFINE_METHOD}"
 [[ -n "${_preserve_CLOSING_SIZE}" ]] && CLOSING_SIZE="${_preserve_CLOSING_SIZE}"
 [[ -n "${_preserve_CLOSING_ITERATIONS}" ]] && CLOSING_ITERATIONS="${_preserve_CLOSING_ITERATIONS}"
@@ -57,6 +59,7 @@ WORK_ROOT="${WORK_ROOT:-}"
 REFINE_INPUT_DIR="${REFINE_INPUT_DIR:-}"
 REFINE_OUTPUT_DIR="${REFINE_OUTPUT_DIR:-${WORK_ROOT}/classified_refined}"
 REFINE_METHOD="${REFINE_METHOD:-fill_holes}"
+MAX_HOLE_AREA="${MAX_HOLE_AREA:-16}"
 CLOSING_SIZE="${CLOSING_SIZE:-2}"
 CLOSING_ITERATIONS="${CLOSING_ITERATIONS:-1}"
 REFINE_OUTPUT_SUFFIX="${REFINE_OUTPUT_SUFFIX:-_filled}"
@@ -109,6 +112,13 @@ log "PYTHON=${PYTHON}"
 log "REFINE_INPUT_DIR=${REFINE_INPUT_DIR}"
 log "REFINE_OUTPUT_DIR=${REFINE_OUTPUT_DIR}"
 log "Method: ${REFINE_METHOD}"
+if [[ "${REFINE_METHOD}" == "fill_holes" || "${REFINE_METHOD}" == "both" ]]; then
+  if [[ "${MAX_HOLE_AREA}" == "0" ]]; then
+    log "fill_holes: unlimited (all enclosed holes)"
+  else
+    log "fill_holes: max hole area = ${MAX_HOLE_AREA} px"
+  fi
+fi
 if [[ "${REFINE_METHOD}" == "closing" || "${REFINE_METHOD}" == "both" ]]; then
   log "Closing: ${CLOSING_SIZE}x${CLOSING_SIZE}, iterations=${CLOSING_ITERATIONS}"
 fi
@@ -121,6 +131,7 @@ REFINE_ARGS=(
   --input-dir "${REFINE_INPUT_DIR}"
   --output-dir "${REFINE_OUTPUT_DIR}"
   --method "${REFINE_METHOD}"
+  --max-hole-area "${MAX_HOLE_AREA}"
   --closing-size "${CLOSING_SIZE}"
   --iterations "${CLOSING_ITERATIONS}"
   --output-stem-suffix "${REFINE_OUTPUT_SUFFIX}"

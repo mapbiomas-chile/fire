@@ -179,16 +179,25 @@ python filtering/run_classified_filters.py \
 
 | `--method` | What it does |
 |------------|--------------|
-| **`fill_holes`** (default) | Fills 0-pixels fully surrounded by burn; **outer edge unchanged** |
+| **`fill_holes`** (default) | Fills **small enclosed** 0-pixels inside scars; **outer edge unchanged** |
 | `closing` | Morphological closing; also smooths / expands the **border** |
 | `both` | `fill_holes` then `closing` |
+
+Default: only holes up to **`--max-hole-area 16`** pixels (~4×4). Use `0` for unlimited fill (aggressive).
 
 ```bash
 python filtering/refine_burn_mask_closing.py \
   --input-dir /path/to/classified_filtered \
   --output-dir /path/to/classified_refined \
-  --method fill_holes
+  --method fill_holes --max-hole-area 9
 ```
+
+| `MAX_HOLE_AREA` | Effect |
+|-----------------|--------|
+| `4` | Very gentle (~2×2 holes) |
+| `9` | Gentle (~3×3) |
+| **`16`** (default) | Moderate (~4×4) |
+| `0` | All enclosed holes (aggressive) |
 
 For closing (edge effect): `--method closing --closing-size 2 --iterations 1`
 
@@ -209,6 +218,7 @@ bash filtering/run_refine_closing_pipeline.sh
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REFINE_METHOD` | `fill_holes` | `fill_holes`, `closing`, or `both` |
+| `MAX_HOLE_AREA` | `16` | Max enclosed hole size (px); `0` = unlimited |
 | `REFINE_OUTPUT_SUFFIX` | `_filled` | Output filename suffix |
 | `CLOSING_SIZE` | `2` | For `closing` / `both` only |
 | `CLOSING_ITERATIONS` | `1` | For `closing` / `both` only |
