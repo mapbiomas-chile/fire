@@ -188,24 +188,31 @@ python filtering/refine_burn_mask_closing.py \
   --closing-size 2 --iterations 1
 ```
 
-Pipeline step (not in `STEPS=all` by default):
+**Dedicated pilot pipeline** (not part of `run_filtering_pipeline.sh` yet):
+
+| File | Role |
+|------|------|
+| `run_refine_closing_pipeline.sh` | Closing-only orchestration |
+| `run_refine_closing_pipeline_slurm.sh` | SLURM wrapper |
+| `cluster_paths.refine_closing.env.example` | Minimal path template |
 
 ```bash
-export STEPS="filter,refine_closing"
-# or after masks already exist:
-export STEPS="refine_closing"
-export REFINE_INPUT_DIR="${WORK_ROOT}/classified_filtered"
+cp filtering/cluster_paths.refine_closing.env.example filtering/cluster_paths.env
+# edit REFINE_INPUT_DIR, REFINE_OUTPUT_DIR, PYTHON, WORK_ROOT
+source filtering/cluster_paths.env
+bash filtering/run_refine_closing_pipeline.sh
 ```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REFINE_INPUT_DIR` | `$FILTER_OUTPUT_DIR` | Input rasters |
+| `REFINE_INPUT_DIR` | *(required)* | e.g. `$WORK_ROOT/classified_filtered` |
 | `REFINE_OUTPUT_DIR` | `$WORK_ROOT/classified_refined` | Output folder |
+| `REFINE_NAME_CONTAINS` | *(empty)* | Optional tile filter (e.g. `141228`) |
 | `CLOSING_SIZE` | `2` | Structuring element side (pixels) |
 | `CLOSING_ITERATIONS` | `1` | Closing passes |
 | `REFINE_OUTPUT_SUFFIX` | `_closed` | Appended to output filename |
 
-Try `CLOSING_SIZE=3` only if 2 is too weak; avoid sizes ≥5 unless you explicitly want a stronger fill.
+Try `CLOSING_SIZE=3` only if 2 is too weak; avoid sizes ≥5 unless you explicitly want a stronger fill. If the pilot is successful, this step can later be wired into `run_filtering_pipeline.sh`.
 
 ---
 
@@ -360,4 +367,7 @@ Typical environment: Conda `mb_fuego` (or another env; set path in `PYTHON`).
 | `filter_polygons_by_threshold.py` | § 4 |
 | `run_filtering_pipeline.sh` | Pipeline |
 | `run_filtering_pipeline_slurm.sh` | Pipeline (SLURM) |
-| `cluster_paths.env.example` | Pipeline (config) |
+| `run_refine_closing_pipeline.sh` | Closing pilot pipeline |
+| `run_refine_closing_pipeline_slurm.sh` | Closing pilot (SLURM) |
+| `cluster_paths.env.example` | LULC+temporal config |
+| `cluster_paths.refine_closing.env.example` | Closing pilot config |
