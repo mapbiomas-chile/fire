@@ -21,6 +21,7 @@ _preserve_PYTHON="${PYTHON:-}"
 _preserve_WORK_ROOT="${WORK_ROOT:-}"
 _preserve_REFINE_INPUT_DIR="${REFINE_INPUT_DIR:-}"
 _preserve_REFINE_OUTPUT_DIR="${REFINE_OUTPUT_DIR:-}"
+_preserve_REFINE_METHOD="${REFINE_METHOD:-}"
 _preserve_CLOSING_SIZE="${CLOSING_SIZE:-}"
 _preserve_CLOSING_ITERATIONS="${CLOSING_ITERATIONS:-}"
 _preserve_REFINE_OUTPUT_SUFFIX="${REFINE_OUTPUT_SUFFIX:-}"
@@ -36,6 +37,7 @@ fi
 [[ -n "${_preserve_WORK_ROOT}" ]] && WORK_ROOT="${_preserve_WORK_ROOT}"
 [[ -n "${_preserve_REFINE_INPUT_DIR}" ]] && REFINE_INPUT_DIR="${_preserve_REFINE_INPUT_DIR}"
 [[ -n "${_preserve_REFINE_OUTPUT_DIR}" ]] && REFINE_OUTPUT_DIR="${_preserve_REFINE_OUTPUT_DIR}"
+[[ -n "${_preserve_REFINE_METHOD}" ]] && REFINE_METHOD="${_preserve_REFINE_METHOD}"
 [[ -n "${_preserve_CLOSING_SIZE}" ]] && CLOSING_SIZE="${_preserve_CLOSING_SIZE}"
 [[ -n "${_preserve_CLOSING_ITERATIONS}" ]] && CLOSING_ITERATIONS="${_preserve_CLOSING_ITERATIONS}"
 [[ -n "${_preserve_REFINE_OUTPUT_SUFFIX}" ]] && REFINE_OUTPUT_SUFFIX="${_preserve_REFINE_OUTPUT_SUFFIX}"
@@ -54,9 +56,10 @@ fi
 WORK_ROOT="${WORK_ROOT:-}"
 REFINE_INPUT_DIR="${REFINE_INPUT_DIR:-}"
 REFINE_OUTPUT_DIR="${REFINE_OUTPUT_DIR:-${WORK_ROOT}/classified_refined}"
+REFINE_METHOD="${REFINE_METHOD:-fill_holes}"
 CLOSING_SIZE="${CLOSING_SIZE:-2}"
 CLOSING_ITERATIONS="${CLOSING_ITERATIONS:-1}"
-REFINE_OUTPUT_SUFFIX="${REFINE_OUTPUT_SUFFIX:-_closed}"
+REFINE_OUTPUT_SUFFIX="${REFINE_OUTPUT_SUFFIX:-_filled}"
 REFINE_NAME_CONTAINS="${REFINE_NAME_CONTAINS:-}"
 WORKERS="${WORKERS:-4}"
 BURN_VALUE="${BURN_VALUE:-1}"
@@ -105,7 +108,10 @@ log "REPO_ROOT=${REPO_ROOT}"
 log "PYTHON=${PYTHON}"
 log "REFINE_INPUT_DIR=${REFINE_INPUT_DIR}"
 log "REFINE_OUTPUT_DIR=${REFINE_OUTPUT_DIR}"
-log "Closing: ${CLOSING_SIZE}x${CLOSING_SIZE}, iterations=${CLOSING_ITERATIONS}"
+log "Method: ${REFINE_METHOD}"
+if [[ "${REFINE_METHOD}" == "closing" || "${REFINE_METHOD}" == "both" ]]; then
+  log "Closing: ${CLOSING_SIZE}x${CLOSING_SIZE}, iterations=${CLOSING_ITERATIONS}"
+fi
 if [[ -n "${REFINE_NAME_CONTAINS}" ]]; then
   log "Name filter: ${REFINE_NAME_CONTAINS}"
 fi
@@ -114,20 +120,21 @@ REFINE_ARGS=(
   filtering/refine_burn_mask_closing.py
   --input-dir "${REFINE_INPUT_DIR}"
   --output-dir "${REFINE_OUTPUT_DIR}"
+  --method "${REFINE_METHOD}"
   --closing-size "${CLOSING_SIZE}"
   --iterations "${CLOSING_ITERATIONS}"
   --output-stem-suffix "${REFINE_OUTPUT_SUFFIX}"
   --burn-value "${BURN_VALUE}"
   --fill-value "${FILL_VALUE}"
   --workers "${WORKERS}"
-  --stats-json "${WORK_ROOT}/logs/refine_closing_stats.json"
+  --stats-json "${WORK_ROOT}/logs/refine_stats.json"
 )
 
 if [[ -n "${REFINE_NAME_CONTAINS}" ]]; then
   REFINE_ARGS+=(--name-contains "${REFINE_NAME_CONTAINS}")
 fi
 
-log "=== Gentle closing pipeline (pilot) ==="
+log "=== Burn mask refine pipeline (pilot) ==="
 run_py "${REFINE_ARGS[@]}"
 
 log "=== Finished ==="

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Gentle binary closing on burned-area masks (post LULC + temporal filter).
+Refine burned-area masks after LULC + temporal filter.
 
-Fills small internal gaps and slightly smooths scar edges inward without
-re-running the aggressive morphology used at classification time (typically
-opening 2x2 + closing 4x4). Default here: closing only, 2x2, one iteration.
+Methods:
+  fill_holes  — fill fully enclosed 0-pixels inside scars (no outer boundary change)
+  closing     — morphological closing (also affects edges; use if fill_holes is not enough)
+  both        — fill_holes then closing
 
-Does not change georeferencing; output remains uint8 0/1.
+Output remains uint8 0/1 with clean GeoTIFF profile.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import numpy as np
 import rasterio
 from scipy import ndimage
 
+REFINE_METHODS = ("fill_holes", "closing", "both")
+
 
 def burn_mask(data: np.ndarray, burn_value: int, nodata: float | None) -> np.ndarray:
     mask = data == burn_value
@@ -28,20 +31,27 @@ def burn_mask(data: np.ndarray, burn_value: int, nodata: float | None) -> np.nda
     return mask
 
 
-def apply_gentle_closing(
+def apply_refine(
     mask: np.ndarray,
+    method: str,
     closing_size: int,
     iterations: int,
 ) -> np.ndarray:
+    if method not in REFINE_METHODS:
+        raise ValueError(f"method must be one of {REFINE_METHODS}")
     if closing_size < 1:
         raise ValueError("closing_size must be >= 1")
     if iterations < 1:
         raise ValueError("iterations must be >= 1")
-    structure = np.ones((closing_size, closing_size), dtype=bool)
-    closed = mask.astype(bool)
-    for _ in range(iterations):
-        closed = ndimage.binary_closing(closed, structure=structure)
-    return closed
+
+    refined = mask.astype(bool)
+    if method in ("fill_holes", "both"):
+        refined = ndimage.binary_fill_holes(refined)
+    if method in ("closing", "both"):
+        structure = np.ones((closing_size, closing_size), dtype=bool)
+        for _ in range(iterations):
+            refined = ndimage.binary_closing(refined, structure=structure)
+    return refined
 
 
 def _binary_profile(profile: dict, nodata: int = 0) -> dict:
@@ -67,6 +77,7 @@ def refine_one_file(args: tuple) -> dict:
         band,
         burn_value,
         fill_value,
+        method,
         closing_size,
         iterations,
         output_stem_suffix,
@@ -81,14 +92,14 @@ def refine_one_file(args: tuple) -> dict:
         nodata = src.nodata
 
     mask = burn_mask(data, burn_value, nodata)
-    closed = apply_gentle_closing(mask, closing_size, iterations)
-    out = np.full(closed.shape, fill_value, dtype=np.uint8)
-    out[closed] = np.uint8(burn_value)
+    refined = apply_refine(mask, method, closing_size, iterations)
+    out = np.full(refined.shape, fill_value, dtype=np.uint8)
+    out[refined] = np.uint8(burn_value)
 
     pixels_before = int(mask.sum())
-    pixels_after = int(closed.sum())
-    pixels_added = int((closed & ~mask).sum())
-    pixels_removed = int((mask & ~closed).sum())
+    pixels_after = int(refined.sum())
+    pixels_added = int((refined & ~mask).sum())
+    pixels_removed = int((mask & ~refined).sum())
 
     stem = tif_path.stem
     if output_stem_suffix and not stem.endswith(output_stem_suffix):
@@ -103,6 +114,7 @@ def refine_one_file(args: tuple) -> dict:
     return {
         "input_file": str(tif_path),
         "output_file": str(out_path),
+        "method": method,
         "closing_size": closing_size,
         "iterations": iterations,
         "pixels_burned_before": pixels_before,
@@ -133,8 +145,7 @@ def collect_inputs(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Apply gentle binary closing to burned-area rasters (fill small gaps, "
-            "light inward smoothing). Closing only; no opening."
+            "Refine burned-area masks: fill internal holes (default) or morphological closing."
         )
     )
     parser.add_argument("--input-dir", required=True, help="Folder with filtered uint8 masks.")
@@ -149,21 +160,30 @@ def main() -> int:
     parser.add_argument("--burn-value", type=int, default=1, help="Burn class value (default: 1).")
     parser.add_argument("--fill-value", type=int, default=0, help="Background value (default: 0).")
     parser.add_argument(
+        "--method",
+        choices=REFINE_METHODS,
+        default="fill_holes",
+        help=(
+            "fill_holes: enclosed gaps only, boundary unchanged (default). "
+            "closing: morphological closing. both: fill_holes then closing."
+        ),
+    )
+    parser.add_argument(
         "--closing-size",
         type=int,
         default=2,
-        help="Square structuring element side in pixels (default: 2 = gentle).",
+        help="Closing kernel side in pixels (used for closing/both; default: 2).",
     )
     parser.add_argument(
         "--iterations",
         type=int,
         default=1,
-        help="Number of closing passes (default: 1).",
+        help="Closing passes (used for closing/both; default: 1).",
     )
     parser.add_argument(
         "--output-stem-suffix",
-        default="_closed",
-        help="Append to output stem (default: _closed). Use '' to keep the input stem.",
+        default="_filled",
+        help="Append to output stem (default: _filled). Use '' to keep the input stem.",
     )
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--stats-json", default=None, help="Optional JSON summary path.")
@@ -189,6 +209,7 @@ def main() -> int:
             args.band,
             args.burn_value,
             args.fill_value,
+            args.method,
             args.closing_size,
             args.iterations,
             args.output_stem_suffix,
@@ -197,8 +218,13 @@ def main() -> int:
     ]
 
     workers = min(args.workers, len(tasks))
-    print(f"[INFO] Files: {len(tasks)} | closing {args.closing_size}x{args.closing_size} x{args.iterations}")
-    print(f"[INFO] Workers: {workers}")
+    print(f"[INFO] Files: {len(tasks)} | method={args.method}", flush=True)
+    if args.method in ("closing", "both"):
+        print(
+            f"[INFO] Closing: {args.closing_size}x{args.closing_size} x{args.iterations}",
+            flush=True,
+        )
+    print(f"[INFO] Workers: {workers}", flush=True)
 
     results: list[dict] = []
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -209,13 +235,15 @@ def main() -> int:
             print(
                 f"[INFO] {Path(stats['input_file']).name}: "
                 f"+{stats['pixels_added']} px "
-                f"(burned {stats['pixels_burned_before']} -> {stats['pixels_burned_after']})"
+                f"(burned {stats['pixels_burned_before']} -> {stats['pixels_burned_after']})",
+                flush=True,
             )
 
     if args.stats_json:
         out = Path(args.stats_json)
         out.parent.mkdir(parents=True, exist_ok=True)
         summary = {
+            "method": args.method,
             "closing_size": args.closing_size,
             "iterations": args.iterations,
             "n_files": len(results),
@@ -224,9 +252,9 @@ def main() -> int:
         }
         with out.open("w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
-        print(f"[INFO] Stats: {out}")
+        print(f"[INFO] Stats: {out}", flush=True)
 
-    print("[INFO] Done.")
+    print("[INFO] Done.", flush=True)
     return 0
 
 

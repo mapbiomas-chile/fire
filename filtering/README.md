@@ -171,48 +171,49 @@ python filtering/run_classified_filters.py \
 
 ---
 
-## 3b. Gentle morphological closing (optional)
+## 3b. Internal hole fill / morphological refine (optional pilot)
 
-**Purpose:** light **inward** touch-up after LULC + temporal filtering — fill small internal gaps and smooth jagged edges without re-running the stronger morphology at classification time (typically opening 2×2 + closing 4×4).
+**Purpose:** touch-up after LULC + temporal filtering — mainly **fill enclosed gaps inside scars** without moving the outer boundary.
 
 **Script:** `refine_burn_mask_closing.py`
 
-- **Closing only** (no opening), so scars are not shrunk.
-- Default: **2×2** structuring element, **1** iteration (conservative).
-- Output stays `uint8` 0/1; logs pixels added per tile.
+| `--method` | What it does |
+|------------|--------------|
+| **`fill_holes`** (default) | Fills 0-pixels fully surrounded by burn; **outer edge unchanged** |
+| `closing` | Morphological closing; also smooths / expands the **border** |
+| `both` | `fill_holes` then `closing` |
 
 ```bash
 python filtering/refine_burn_mask_closing.py \
   --input-dir /path/to/classified_filtered \
   --output-dir /path/to/classified_refined \
-  --closing-size 2 --iterations 1
+  --method fill_holes
 ```
 
-**Dedicated pilot pipeline** (not part of `run_filtering_pipeline.sh` yet):
+For closing (edge effect): `--method closing --closing-size 2 --iterations 1`
+
+**Pilot pipeline** (not in `run_filtering_pipeline.sh` yet):
 
 | File | Role |
 |------|------|
-| `run_refine_closing_pipeline.sh` | Closing-only orchestration |
+| `run_refine_closing_pipeline.sh` | Orchestration |
 | `run_refine_closing_pipeline_slurm.sh` | SLURM wrapper |
-| `cluster_paths.refine_closing.env.example` | Minimal path template |
+| `cluster_paths.refine_closing.env.example` | Path template |
 
 ```bash
 cp filtering/cluster_paths.refine_closing.env.example filtering/cluster_paths.env
-# edit REFINE_INPUT_DIR, REFINE_OUTPUT_DIR, PYTHON, WORK_ROOT
 source filtering/cluster_paths.env
 bash filtering/run_refine_closing_pipeline.sh
 ```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REFINE_INPUT_DIR` | *(required)* | e.g. `$WORK_ROOT/classified_filtered` |
-| `REFINE_OUTPUT_DIR` | `$WORK_ROOT/classified_refined` | Output folder |
-| `REFINE_NAME_CONTAINS` | *(empty)* | Optional tile filter (e.g. `141228`) |
-| `CLOSING_SIZE` | `2` | Structuring element side (pixels) |
-| `CLOSING_ITERATIONS` | `1` | Closing passes |
-| `REFINE_OUTPUT_SUFFIX` | `_closed` | Appended to output filename |
+| `REFINE_METHOD` | `fill_holes` | `fill_holes`, `closing`, or `both` |
+| `REFINE_OUTPUT_SUFFIX` | `_filled` | Output filename suffix |
+| `CLOSING_SIZE` | `2` | For `closing` / `both` only |
+| `CLOSING_ITERATIONS` | `1` | For `closing` / `both` only |
 
-Try `CLOSING_SIZE=3` only if 2 is too weak; avoid sizes ≥5 unless you explicitly want a stronger fill. If the pilot is successful, this step can later be wired into `run_filtering_pipeline.sh`.
+**Note:** `fill_holes` does not fill narrow gaps that connect to the background (not fully enclosed). Use `--method both` with a small closing kernel if needed.
 
 ---
 
