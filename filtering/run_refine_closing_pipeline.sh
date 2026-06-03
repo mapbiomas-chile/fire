@@ -40,7 +40,7 @@ fi
 [[ -n "${_preserve_CLOSING_ITERATIONS}" ]] && CLOSING_ITERATIONS="${_preserve_CLOSING_ITERATIONS}"
 [[ -n "${_preserve_REFINE_OUTPUT_SUFFIX}" ]] && REFINE_OUTPUT_SUFFIX="${_preserve_REFINE_OUTPUT_SUFFIX}"
 [[ -n "${_preserve_REFINE_NAME_CONTAINS}" ]] && REFINE_NAME_CONTAINS="${_preserve_REFINE_NAME_CONTAINS}"
-[[ -n "${_preserve_WORKERS}" ]] && WORKERS="${WORKERS:-${_preserve_WORKERS}}"
+[[ -n "${_preserve_WORKERS}" ]] && WORKERS="${_preserve_WORKERS}"
 
 PYTHON="${PYTHON:-}"
 if [[ -z "${PYTHON}" ]]; then
