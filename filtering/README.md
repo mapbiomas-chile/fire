@@ -32,6 +32,11 @@ Multi-band LULC stack
 └───────────────────────────────────────┘
         │
         ▼  classified_filtered/
+┌───────────────────────────────────────┐
+│ 3b. Gentle closing (optional)       │  refine_burn_mask_closing.py
+└───────────────────────────────────────┘
+        │
+        ▼  classified_refined/  (*_closed.tif)
    (optional, for validation)
 ┌───────────────────────────────────────┐
 │ 4. Polygonize → histograms → threshold│  polygonize_mask_parallel.py
@@ -166,6 +171,44 @@ python filtering/run_classified_filters.py \
 
 ---
 
+## 3b. Gentle morphological closing (optional)
+
+**Purpose:** light **inward** touch-up after LULC + temporal filtering — fill small internal gaps and smooth jagged edges without re-running the stronger morphology at classification time (typically opening 2×2 + closing 4×4).
+
+**Script:** `refine_burn_mask_closing.py`
+
+- **Closing only** (no opening), so scars are not shrunk.
+- Default: **2×2** structuring element, **1** iteration (conservative).
+- Output stays `uint8` 0/1; logs pixels added per tile.
+
+```bash
+python filtering/refine_burn_mask_closing.py \
+  --input-dir /path/to/classified_filtered \
+  --output-dir /path/to/classified_refined \
+  --closing-size 2 --iterations 1
+```
+
+Pipeline step (not in `STEPS=all` by default):
+
+```bash
+export STEPS="filter,refine_closing"
+# or after masks already exist:
+export STEPS="refine_closing"
+export REFINE_INPUT_DIR="${WORK_ROOT}/classified_filtered"
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REFINE_INPUT_DIR` | `$FILTER_OUTPUT_DIR` | Input rasters |
+| `REFINE_OUTPUT_DIR` | `$WORK_ROOT/classified_refined` | Output folder |
+| `CLOSING_SIZE` | `2` | Structuring element side (pixels) |
+| `CLOSING_ITERATIONS` | `1` | Closing passes |
+| `REFINE_OUTPUT_SUFFIX` | `_closed` | Appended to output filename |
+
+Try `CLOSING_SIZE=3` only if 2 is too weak; avoid sizes ≥5 unless you explicitly want a stronger fill.
+
+---
+
 ## 4. Polygonize, histograms, and threshold (optional)
 
 **Post-raster-filtering** steps. Not part of the bash pipeline; run when you need polygons or vector validation.
@@ -293,6 +336,7 @@ After § 3: `..._filtered_<timestamp>_first_burn_year.tif`
 | Stages | Packages |
 |--------|----------|
 | § 1–3 (masks + filtering) | `numpy`, `rasterio` |
+| § 3b closing | `numpy`, `rasterio`, `scipy` |
 | § 4 polygonize + threshold | `geopandas` |
 | § 4 histograms | `geopandas`, `matplotlib` |
 
@@ -309,6 +353,7 @@ Typical environment: Conda `mb_fuego` (or another env; set path in `PYTHON`).
 | `create_total_masks_by_year.py` | § 1c |
 | `filter_classified_parallel.py` | § 2 |
 | `filter_temporal_first_burn_year.py` | § 3 |
+| `refine_burn_mask_closing.py` | § 3b |
 | `run_classified_filters.py` | § 2 + § 3 |
 | `polygonize_mask_parallel.py` | § 4 |
 | `summarize_histograms_by_region.py` | § 4 |

@@ -49,6 +49,12 @@ TEMPORAL_CONNECTIVITY="${TEMPORAL_CONNECTIVITY:-8}"
 TEMPORAL_YEAR_TOKEN_INDEX="${TEMPORAL_YEAR_TOKEN_INDEX:-3}"
 FILTER_NAME_CONTAINS="${FILTER_NAME_CONTAINS:-${TEMPORAL_NAME_CONTAINS:-}}"
 
+REFINE_INPUT_DIR="${REFINE_INPUT_DIR:-${FILTER_OUTPUT_DIR}}"
+REFINE_OUTPUT_DIR="${REFINE_OUTPUT_DIR:-${WORK_ROOT}/classified_refined}"
+CLOSING_SIZE="${CLOSING_SIZE:-2}"
+CLOSING_ITERATIONS="${CLOSING_ITERATIONS:-1}"
+REFINE_OUTPUT_SUFFIX="${REFINE_OUTPUT_SUFFIX:-_closed}"
+
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2025}"
 LULC_TO_YEAR="${LULC_TO_YEAR:-2024}"
@@ -208,7 +214,8 @@ if steps_need_masks; then
   fi
 fi
 
-mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL_MASKS_DIR}" "${FILTER_OUTPUT_DIR}" "${LULC_INTERMEDIATE_DIR}"
+mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL_MASKS_DIR}" \
+  "${FILTER_OUTPUT_DIR}" "${LULC_INTERMEDIATE_DIR}" "${REFINE_OUTPUT_DIR}"
 cd "${REPO_ROOT}"
 
 log "REPO_ROOT=${REPO_ROOT}"
@@ -279,6 +286,31 @@ if step_enabled "temporal_first_burn"; then
   run_unified_filter temporal
 fi
 
+if step_enabled "refine_closing"; then
+  if [[ ! -d "${REFINE_INPUT_DIR}" ]]; then
+    echo "ERROR: REFINE_INPUT_DIR not found (run filter first): ${REFINE_INPUT_DIR}" >&2
+    exit 1
+  fi
+  log "=== Step: gentle morphological closing on burn masks ==="
+  log "Input:  ${REFINE_INPUT_DIR}"
+  log "Output: ${REFINE_OUTPUT_DIR}"
+  log "Closing: ${CLOSING_SIZE}x${CLOSING_SIZE}, iterations=${CLOSING_ITERATIONS}"
+  REFINE_ARGS=(
+    filtering/refine_burn_mask_closing.py
+    --input-dir "${REFINE_INPUT_DIR}"
+    --output-dir "${REFINE_OUTPUT_DIR}"
+    --closing-size "${CLOSING_SIZE}"
+    --iterations "${CLOSING_ITERATIONS}"
+    --output-stem-suffix "${REFINE_OUTPUT_SUFFIX}"
+    --workers "${WORKERS}"
+    --stats-json "${WORK_ROOT}/logs/refine_closing_stats.json"
+  )
+  if [[ -n "${FILTER_NAME_CONTAINS}" ]]; then
+    REFINE_ARGS+=(--name-contains "${FILTER_NAME_CONTAINS}")
+  fi
+  run_py "${REFINE_ARGS[@]}"
+fi
+
 log "=== Pipeline finished ==="
 log "Accumulated masks: ${ACCUMULATED_DIR}"
 log "Yearly masks:      ${YEARLY_MASKS_DIR}"
@@ -288,4 +320,7 @@ if step_enabled "filter" || step_enabled "temporal_first_burn"; then
 fi
 if [[ "${KEEP_LULC_INTERMEDIATE}" == "1" ]] && { step_enabled "filter" || step_enabled "lulc_filter"; }; then
   log "LULC intermediate: ${LULC_INTERMEDIATE_DIR}"
+fi
+if step_enabled "refine_closing"; then
+  log "Refined (closing): ${REFINE_OUTPUT_DIR}"
 fi
