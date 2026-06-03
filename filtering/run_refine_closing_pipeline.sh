@@ -16,10 +16,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 PATHS_FILE="${REFINE_PATHS_FILE:-${SCRIPT_DIR}/cluster_paths.env}"
 
+# Shell exports win over cluster_paths.env (so inline export ... && bash works).
+_preserve_PYTHON="${PYTHON:-}"
+_preserve_WORK_ROOT="${WORK_ROOT:-}"
+_preserve_REFINE_INPUT_DIR="${REFINE_INPUT_DIR:-}"
+_preserve_REFINE_OUTPUT_DIR="${REFINE_OUTPUT_DIR:-}"
+_preserve_CLOSING_SIZE="${CLOSING_SIZE:-}"
+_preserve_CLOSING_ITERATIONS="${CLOSING_ITERATIONS:-}"
+_preserve_REFINE_OUTPUT_SUFFIX="${REFINE_OUTPUT_SUFFIX:-}"
+_preserve_REFINE_NAME_CONTAINS="${REFINE_NAME_CONTAINS:-}"
+_preserve_WORKERS="${WORKERS:-}"
+
 if [[ -f "${PATHS_FILE}" ]]; then
   # shellcheck source=/dev/null
   source "${PATHS_FILE}"
 fi
+
+[[ -n "${_preserve_PYTHON}" ]] && PYTHON="${_preserve_PYTHON}"
+[[ -n "${_preserve_WORK_ROOT}" ]] && WORK_ROOT="${_preserve_WORK_ROOT}"
+[[ -n "${_preserve_REFINE_INPUT_DIR}" ]] && REFINE_INPUT_DIR="${_preserve_REFINE_INPUT_DIR}"
+[[ -n "${_preserve_REFINE_OUTPUT_DIR}" ]] && REFINE_OUTPUT_DIR="${_preserve_REFINE_OUTPUT_DIR}"
+[[ -n "${_preserve_CLOSING_SIZE}" ]] && CLOSING_SIZE="${_preserve_CLOSING_SIZE}"
+[[ -n "${_preserve_CLOSING_ITERATIONS}" ]] && CLOSING_ITERATIONS="${_preserve_CLOSING_ITERATIONS}"
+[[ -n "${_preserve_REFINE_OUTPUT_SUFFIX}" ]] && REFINE_OUTPUT_SUFFIX="${_preserve_REFINE_OUTPUT_SUFFIX}"
+[[ -n "${_preserve_REFINE_NAME_CONTAINS}" ]] && REFINE_NAME_CONTAINS="${_preserve_REFINE_NAME_CONTAINS}"
+[[ -n "${_preserve_WORKERS}" ]] && WORKERS="${WORKERS:-${_preserve_WORKERS}}"
 
 PYTHON="${PYTHON:-}"
 if [[ -z "${PYTHON}" ]]; then
@@ -59,6 +80,11 @@ run_py() {
 }
 
 require_var PYTHON
+if [[ "${PYTHON}" == *"/path/to/"* ]]; then
+  echo "ERROR: PYTHON is still the example placeholder in ${PATHS_FILE}." >&2
+  echo "Edit that file or export PYTHON before running." >&2
+  exit 1
+fi
 if [[ ! -x "${PYTHON}" && ! -f "${PYTHON}" ]]; then
   echo "ERROR: PYTHON not found: ${PYTHON}" >&2
   exit 1
