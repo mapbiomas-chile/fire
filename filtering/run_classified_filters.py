@@ -253,7 +253,7 @@ def main() -> int:
             "--method",
             args.fill_method,
             "--max-hole-area",
-            str(args.max-hole_area),
+            str(args.max_hole_area),
             "--closing-size",
             str(args.closing_size),
             "--iterations",

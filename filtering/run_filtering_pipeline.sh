@@ -12,10 +12,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 PATHS_FILE="${SCRIPT_DIR}/cluster_paths.env"
 
+_preserve_STEPS="${STEPS:-}"
+
 if [[ -f "${PATHS_FILE}" ]]; then
   # shellcheck source=/dev/null
   source "${PATHS_FILE}"
 fi
+
+[[ -n "${_preserve_STEPS}" ]] && STEPS="${_preserve_STEPS}"
 
 # --- Rutas y runtime (sin defaults personales; definir en cluster_paths.env o export) ---
 PYTHON="${PYTHON:-}"
