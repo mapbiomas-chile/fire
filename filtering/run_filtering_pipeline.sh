@@ -219,7 +219,7 @@ if steps_need_raw_classified_dir; then
   require_var CLASSIFIED_DIR
 fi
 
-if step_enabled "filter" || step_enabled "lulc_filter"; then
+if { step_enabled "filter" || step_enabled "lulc_filter"; } && ! steps_need_masks; then
   if [[ ! -d "${TOTAL_MASKS_DIR}" ]]; then
     echo "ERROR: Masks dir not found (run mask steps first): ${TOTAL_MASKS_DIR}" >&2
     exit 1
