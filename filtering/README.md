@@ -23,29 +23,30 @@ Multi-band LULC stack
         │
         ▼  mascara_total_<year>.tif
 ┌───────────────────────────────────────┐
-│ 2. LULC filter on classified tiles  │  filter_classified_parallel.py
+│ 2. Temporal filter (first burn year)  │  filter_temporal_first_burn_year.py
 └───────────────────────────────────────┘
         │
         ▼
 ┌───────────────────────────────────────┐
-│ 3. Temporal filter (first burn year)  │  filter_temporal_first_burn_year.py
+│ 3. Internal hole fill                 │  refine_burn_mask_closing.py
+│    (fill_holes, all enclosed gaps)    │
+└───────────────────────────────────────┘
+        │
+        ▼
+┌───────────────────────────────────────┐
+│ 4. LULC filter on classified tiles  │  filter_classified_parallel.py
 └───────────────────────────────────────┘
         │
         ▼  classified_filtered/
-┌───────────────────────────────────────┐
-│ 3b. Gentle closing (optional)       │  refine_burn_mask_closing.py
-└───────────────────────────────────────┘
-        │
-        ▼  classified_refined/  (*_closed.tif)
    (optional, for validation)
 ┌───────────────────────────────────────┐
-│ 4. Polygonize → histograms → threshold│  polygonize_mask_parallel.py
+│ 5. Polygonize → histograms → threshold│  polygonize_mask_parallel.py
 │                                       │  summarize_histograms_by_region.py
 │                                       │  filter_polygons_by_threshold.py
 └───────────────────────────────────────┘
 ```
 
-Steps **1–3** can run together via `run_classified_filters.py` (steps 2+3) or the bash pipeline (full steps 1–3). See [Automated pipeline](#automated-pipeline) at the end.
+Steps **1–4** (mask build + filter) can run together via `run_classified_filters.py` (steps 2–4) or the bash pipeline (full steps 1–4). See [Automated pipeline](#automated-pipeline) at the end.
 
 ---
 
@@ -105,7 +106,53 @@ python filtering/create_total_masks_by_year.py \
 
 ---
 
-## 2. LULC filter on classified rasters
+## 2. Temporal filter (first burn year)
+
+**Purpose:** remove **multi-year persistence** at the same pixel. If a pixel is burned in 2013 and again in 2014, it is kept only in **2013** (2013 > 2014 > 2015 > … > 2025).
+
+**Script:** `filter_temporal_first_burn_year.py`
+
+- Input: **raw** classified tiles (one raster per tile × year).
+- Groups all years of the same tile (year at token index 3: `b14_chile_r1_**2013**_...`).
+- Processes years in chronological order; the first burn year wins the pixel.
+- Output: `uint8` rasters with values `0` and `1`, suffix `_first_burn_year`.
+
+Optional (`TEMPORAL_SPATIAL_MERGE=1`): pixels newly burned in year Y but **8-connected** to a scar from an earlier year are attributed to that origin year (e.g. Dec 2017 / Jan 2018 split).
+
+```bash
+python filtering/filter_temporal_first_burn_year.py \
+  --input-dir /path/to/classi_v2 \
+  --output-dir /path/to/classified_temporal \
+  --from-year 2013 --to-year 2025 \
+  --no-spatial-merge
+```
+
+---
+
+## 3. Internal hole fill
+
+**Purpose:** fill **all enclosed** 0-pixels inside burn scars without moving the outer boundary. Runs **after** temporal dedup and **before** LULC so non-burnable classes are removed last.
+
+**Script:** `refine_burn_mask_closing.py` (pipeline uses `--method fill_holes` only).
+
+| `--method` | What it does |
+|------------|--------------|
+| **`fill_holes`** (pipeline default) | Fills enclosed gaps inside scars; **outer edge unchanged** |
+| `closing` | Morphological closing; also smooths / expands the **border** |
+| `both` | `fill_holes` then `closing` |
+
+Pipeline default: **`--max-hole-area 0`** (all enclosed holes). For a gentler standalone run, use e.g. `9` or `16`.
+
+```bash
+python filtering/refine_burn_mask_closing.py \
+  --input-dir /path/to/classified_temporal \
+  --output-dir /path/to/classified_filled \
+  --method fill_holes --max-hole-area 0 --output-stem-suffix ""
+```
+
+---
+
+## 4. LULC filter on classified rasters
 
 **Purpose:** for each classified tile of year Y, apply `mascara_total_Y.tif`. Where the mask is `1`, burned pixels are set to `0`.
 
@@ -117,41 +164,19 @@ python filtering/create_total_masks_by_year.py \
 
 ```bash
 python filtering/filter_classified_parallel.py \
-  --input-dir /path/to/classi_v2 \
+  --input-dir /path/to/classified_filled \
   --masks-dir /path/to/mascaras/totales \
-  --output-dir /path/to/classified_lulc_only \
+  --output-dir /path/to/classified_filtered \
   --workers 4
 ```
 
 ---
 
-## 3. Temporal filter (first burn year)
-
-**Purpose:** remove **multi-year persistence** at the same pixel. If a pixel is burned in 2013 and again in 2014, it is kept only in **2013** (2013 > 2014 > 2015 > … > 2025).
-
-**Script:** `filter_temporal_first_burn_year.py`
-
-- Groups all years of the same tile (year at token index 3: `b14_chile_r1_**2013**_...`).
-- Processes years in chronological order; the first burn year wins the pixel.
-- Output: `uint8` rasters with values `0` and `1`, suffix `_first_burn_year`.
-
-Optional (`TEMPORAL_SPATIAL_MERGE=1`): pixels newly burned in year Y but **8-connected** to a scar from an earlier year are attributed to that origin year (e.g. Dec 2017 / Jan 2018 split).
-
-```bash
-python filtering/filter_temporal_first_burn_year.py \
-  --input-dir /path/to/classified_lulc_only \
-  --output-dir /path/to/classified_filtered \
-  --from-year 2013 --to-year 2025 \
-  --no-spatial-merge
-```
-
----
-
-## Steps 2 + 3 in one command
+## Steps 2 + 3 + 4 in one command
 
 **Script:** `run_classified_filters.py`
 
-Chains `filter_classified_parallel.py` → `filter_temporal_first_burn_year.py`. This is what the bash pipeline step `filter` runs.
+Chains `filter_temporal_first_burn_year.py` → `refine_burn_mask_closing.py` → `filter_classified_parallel.py`. This is what the bash pipeline step `filter` runs.
 
 ```bash
 python filtering/run_classified_filters.py \
@@ -159,88 +184,50 @@ python filtering/run_classified_filters.py \
   --masks-dir /path/to/mascaras/totales \
   --output-dir /path/to/classified_filtered \
   --from-year 2013 --to-year 2025 \
-  --stats-json /path/to/logs/filter_stats.json
+  --max-hole-area 0 \
+  --stats-json /path/to/logs/filter_stats.json \
+  --fill-stats-json /path/to/logs/fill_stats.json
 ```
 
 | Flag | Use |
 |------|-----|
-| `--lulc-only` | LULC filter only (step 2) |
-| `--temporal-only` | Temporal filter only (step 3); input = step 2 output |
+| `--temporal-only` | Temporal filter only (step 2) |
+| `--fill-only` | Hole fill only (step 3); input = temporal output |
+| `--lulc-only` | LULC filter only (step 4) |
+| `--skip-fill` | Temporal → LULC without hole fill |
 | `--no-spatial-merge` | Same-pixel dedup only (default) |
-| `--name-contains 141228` | Limit temporal step to matching filenames |
+| `--name-contains 141228` | Limit temporal/fill steps to matching filenames |
 
 ---
 
-## 3b. Internal hole fill / morphological refine (optional pilot)
+## Standalone refine pilot (legacy)
 
-**Purpose:** touch-up after LULC + temporal filtering — mainly **fill enclosed gaps inside scars** without moving the outer boundary.
-
-**Script:** `refine_burn_mask_closing.py`
-
-| `--method` | What it does |
-|------------|--------------|
-| **`fill_holes`** (default) | Fills **small enclosed** 0-pixels inside scars; **outer edge unchanged** |
-| `closing` | Morphological closing; also smooths / expands the **border** |
-| `both` | `fill_holes` then `closing` |
-
-Default: only holes up to **`--max-hole-area 16`** pixels (~4×4). Use `0` for unlimited fill (aggressive).
-
-```bash
-python filtering/refine_burn_mask_closing.py \
-  --input-dir /path/to/classified_filtered \
-  --output-dir /path/to/classified_refined \
-  --method fill_holes --max-hole-area 9
-```
-
-| `MAX_HOLE_AREA` | Effect |
-|-----------------|--------|
-| `4` | Very gentle (~2×2 holes) |
-| `9` | Gentle (~3×3) |
-| **`16`** (default) | Moderate (~4×4) |
-| `0` | All enclosed holes (aggressive) |
-
-For closing (edge effect): `--method closing --closing-size 2 --iterations 1`
-
-**Pilot pipeline** (not in `run_filtering_pipeline.sh` yet):
+`run_refine_closing_pipeline.sh` remains for re-running hole fill / closing on an **existing** folder without the full pipeline. Production flow uses step 3 above.
 
 | File | Role |
 |------|------|
-| `run_refine_closing_pipeline.sh` | Orchestration |
+| `run_refine_closing_pipeline.sh` | Standalone orchestration |
 | `run_refine_closing_pipeline_slurm.sh` | SLURM wrapper |
 | `cluster_paths.refine_closing.env.example` | Path template |
-
-```bash
-cp filtering/cluster_paths.refine_closing.env.example filtering/cluster_paths.env
-source filtering/cluster_paths.env
-bash filtering/run_refine_closing_pipeline.sh
-```
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REFINE_METHOD` | `fill_holes` | `fill_holes`, `closing`, or `both` |
-| `MAX_HOLE_AREA` | `16` | Max enclosed hole size (px); `0` = unlimited |
-| `REFINE_OUTPUT_SUFFIX` | `_filled` | Output filename suffix |
-| `CLOSING_SIZE` | `2` | For `closing` / `both` only |
-| `CLOSING_ITERATIONS` | `1` | For `closing` / `both` only |
 
 **Note:** `fill_holes` does not fill narrow gaps that connect to the background (not fully enclosed). Use `--method both` with a small closing kernel if needed.
 
 ---
 
-## 4. Polygonize, histograms, and threshold (optional)
+## 5. Vectorize, histograms, and threshold (optional)
 
-**Post-raster-filtering** steps. Not part of the bash pipeline; run when you need polygons or vector validation.
+**After** `classified_filtered/` is ready. Vectorization has its own auxiliary pipeline in [`../vectorize/`](../vectorize/README.md).
 
-| Step | Script | Purpose |
-|------|--------|---------|
-| Polygonize | `polygonize_mask_parallel.py` | Pixels = 1 → polygons; one GPKG per raster |
+| Step | Script / pipeline | Purpose |
+|------|-------------------|---------|
+| Polygonize | [`vectorize/run_vectorize_pipeline.sh`](../vectorize/README.md) | Pixels = 1 → polygons; one GPKG per raster |
 | Histograms | `summarize_histograms_by_region.py` | Area distribution by region (`r1`, `r2`, …) to pick a threshold |
 | Threshold | `filter_polygons_by_threshold.py` | Keep polygons ≥ N hectares |
 
 ```bash
-python filtering/polygonize_mask_parallel.py \
-  --input-dir /path/to/classified_filtered \
-  --output-dir /path/to/polygons --mask-value 1 --workers 4
+cp vectorize/cluster_paths.env.example vectorize/cluster_paths.env
+# edit PYTHON, WORK_ROOT, then:
+bash vectorize/run_vectorize_pipeline.sh
 
 python filtering/summarize_histograms_by_region.py \
   --input-dir /path/to/polygons --output-dir /path/to/histograms
@@ -257,7 +244,7 @@ For validation against reference scars: reproject to an equal-area CRS ([`../val
 
 ## Automated pipeline
 
-When masks and classified tiles are already on disk, you can run **the full flow 1–3** with bash instead of calling each script separately.
+When masks and classified tiles are already on disk, you can run **the full flow 1–4** with bash instead of calling each script separately.
 
 | File | Role |
 |------|------|
@@ -281,10 +268,10 @@ bash filtering/run_filtering_pipeline.sh
 | `PYTHON` | Always | Interpreter with `numpy` + `rasterio` |
 | `WORK_ROOT` | Always | Output root (masks + filtered rasters) |
 | `LULC_STACK` | Mask steps (`masks_*`) | Multi-band MapBiomas GeoTIFF |
-| `CLASSIFIED_DIR` | Step `filter` or `lulc_filter` | Raw classified tiles |
+| `CLASSIFIED_DIR` | Step `filter` or `temporal_first_burn` | Raw classified tiles |
 | `STEPS` | Optional (default `all`) | Steps to run |
 
-Other settings (`FROM_YEAR`, `WORKERS`, `FILTER_OUTPUT_DIR`, etc.) have sensible defaults in `cluster_paths.env.example`.
+Other settings (`FROM_YEAR`, `WORKERS`, `MAX_HOLE_AREA`, `FILTER_OUTPUT_DIR`, etc.) have sensible defaults in `cluster_paths.env.example`.
 
 ### Pipeline steps (`STEPS`)
 
@@ -293,9 +280,9 @@ Other settings (`FROM_YEAR`, `WORKERS`, `FILTER_OUTPUT_DIR`, etc.) have sensible
 | `masks_accumulated` | § 1a | `create_accumulated_class_masks.py` |
 | `masks_yearly` | § 1b | `create_yearly_masks.py` |
 | `masks_total` | § 1c | `create_total_masks_by_year.py` |
-| **`filter`** | **§ 2 + § 3** | **`run_classified_filters.py`** |
+| **`filter`** | **§ 2 + § 3 + § 4** | **`run_classified_filters.py`** |
 
-Legacy (partial reruns): `lulc_filter` (§ 2 only), `temporal_first_burn` (§ 3 only).
+Partial reruns: `temporal_first_burn` (§ 2), `fill_holes` (§ 3), `lulc_filter` (§ 4).
 
 ```bash
 cd /path/to/fire
@@ -313,11 +300,14 @@ bash filtering/run_filtering_pipeline.sh
 | Variable | Description |
 |----------|-------------|
 | `FILTER_OUTPUT_DIR` | Final output (default: `$WORK_ROOT/classified_filtered`) |
+| `MAX_HOLE_AREA` | Hole fill limit in px; `0` = all enclosed holes (default) |
+| `SKIP_FILL_HOLES` | `1` = temporal → LULC without fill |
+| `KEEP_TEMPORAL_INTERMEDIATE` | `1` = keep § 2 intermediate output |
+| `KEEP_FILL_INTERMEDIATE` | `1` = keep § 3 intermediate output |
 | `FROM_YEAR` / `TO_YEAR` | Year range (default 2013–2025) |
 | `LULC_TO_YEAR` | Last year with a real LULC band (default 2024) |
-| `KEEP_LULC_INTERMEDIATE` | 1 = keep step 2 intermediate output |
-| `FILTER_NAME_CONTAINS` | Limit § 3 to certain filenames |
-| `TEMPORAL_SPATIAL_MERGE` | 1 = enable spatial merge (§ 3) |
+| `FILTER_NAME_CONTAINS` | Limit § 2–3 to certain filenames |
+| `TEMPORAL_SPATIAL_MERGE` | `1` = enable spatial merge (§ 2) |
 
 ### Output layout
 
@@ -327,9 +317,12 @@ ${WORK_ROOT}/
 │   ├── acumuladas/          ← § 1a
 │   ├── by_year/             ← § 1b
 │   └── totales/             ← § 1c  (mascara_total_<year>.tif)
-├── classified_filtered/     ← § 2 + § 3 (final output)
-├── classified_lulc_only/    ← § 2 only (if KEEP_LULC_INTERMEDIATE=1)
-└── logs/filter_stats.json
+├── classified_filtered/     ← § 4 final output (*_filtered_<timestamp>.tif)
+├── classified_temporal/     ← § 2 only (if KEEP_TEMPORAL_INTERMEDIATE=1)
+├── classified_filled/       ← § 3 only (if KEEP_FILL_INTERMEDIATE=1)
+└── logs/
+    ├── filter_stats.json
+    └── fill_stats.json
 ```
 
 ---
@@ -344,8 +337,8 @@ b14_chile_r1_2013_cog_classified.tif
               token index 3 = calendar year
 ```
 
-After § 2: `..._filtered_<timestamp>.tif`  
-After § 3: `..._filtered_<timestamp>_first_burn_year.tif`
+After § 2: `..._first_burn_year.tif`  
+After § 4: `..._first_burn_year_filtered_<timestamp>.tif`
 
 ---
 

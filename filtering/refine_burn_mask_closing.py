@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Refine burned-area masks after LULC + temporal filter.
+Refine burned-area masks: fill internal holes and/or morphological closing.
 
 Methods:
   fill_holes  — fill fully enclosed 0-pixels inside scars (no outer boundary change)

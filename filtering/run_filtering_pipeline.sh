@@ -37,11 +37,16 @@ YEARLY_MASKS_DIR="${YEARLY_MASKS_DIR:-${MASCARAS_ROOT}/by_year}"
 TOTAL_MASKS_DIR="${TOTAL_MASKS_DIR:-${MASCARAS_ROOT}/totales}"
 
 FILTER_OUTPUT_DIR="${FILTER_OUTPUT_DIR:-${WORK_ROOT}/classified_filtered}"
-LULC_INTERMEDIATE_DIR="${LULC_INTERMEDIATE_DIR:-${WORK_ROOT}/classified_lulc_only}"
-KEEP_LULC_INTERMEDIATE="${KEEP_LULC_INTERMEDIATE:-0}"
+TEMPORAL_INTERMEDIATE_DIR="${TEMPORAL_INTERMEDIATE_DIR:-${WORK_ROOT}/classified_temporal}"
+FILL_INTERMEDIATE_DIR="${FILL_INTERMEDIATE_DIR:-${WORK_ROOT}/classified_filled}"
+KEEP_TEMPORAL_INTERMEDIATE="${KEEP_TEMPORAL_INTERMEDIATE:-0}"
+KEEP_FILL_INTERMEDIATE="${KEEP_FILL_INTERMEDIATE:-0}"
+LULC_INPUT_DIR="${LULC_INPUT_DIR:-}"
 
-FILTERED_DIR="${FILTERED_DIR:-${LULC_INTERMEDIATE_DIR}}"
-FIRST_BURN_DIR="${FIRST_BURN_DIR:-${FILTER_OUTPUT_DIR}}"
+FILL_HOLES="${FILL_HOLES:-1}"
+SKIP_FILL_HOLES="${SKIP_FILL_HOLES:-0}"
+MAX_HOLE_AREA="${MAX_HOLE_AREA:-0}"
+FILL_METHOD="${FILL_METHOD:-fill_holes}"
 
 TEMPORAL_SUFFIX="${TEMPORAL_SUFFIX:-_first_burn_year}"
 TEMPORAL_SPATIAL_MERGE="${TEMPORAL_SPATIAL_MERGE:-0}"
@@ -86,11 +91,11 @@ steps_need_masks() {
 }
 
 steps_need_classified() {
-  step_enabled "filter" || step_enabled "lulc_filter"
+  step_enabled "filter" || step_enabled "temporal_first_burn" || step_enabled "fill_holes" || step_enabled "lulc_filter"
 }
 
 steps_need_raw_classified_dir() {
-  steps_need_classified
+  step_enabled "filter" || step_enabled "temporal_first_burn"
 }
 
 run_py() {
@@ -102,25 +107,30 @@ run_unified_filter() {
   local mode="${1:-full}"
   local classified_input="${CLASSIFIED_DIR}"
   local output_dir="${FILTER_OUTPUT_DIR}"
-  local lulc_dir="${LULC_INTERMEDIATE_DIR}"
   local extra_args=()
 
   case "${mode}" in
     full)
-      log "=== Filter: LULC masks + temporal first-burn (unified) ==="
-      ;;
-    lulc)
-      log "=== Filter: LULC masks only (legacy step lulc_filter) ==="
-      output_dir="${LULC_INTERMEDIATE_DIR}"
-      extra_args+=(--lulc-only)
+      log "=== Filter: temporal → hole fill → LULC (unified) ==="
       ;;
     temporal)
-      log "=== Filter: temporal first-burn only (legacy step temporal_first_burn) ==="
-      classified_input="${TEMPORAL_INPUT_DIR:-${LULC_INTERMEDIATE_DIR}}"
-      if [[ ! -d "${classified_input}" ]]; then
-        classified_input="${FILTERED_DIR}"
-      fi
+      log "=== Filter: temporal first-burn only ==="
+      output_dir="${TEMPORAL_INTERMEDIATE_DIR}"
       extra_args+=(--temporal-only)
+      ;;
+    fill_holes)
+      log "=== Filter: internal hole fill only ==="
+      classified_input="${FILL_INPUT_DIR:-${TEMPORAL_INTERMEDIATE_DIR}}"
+      output_dir="${FILL_INTERMEDIATE_DIR}"
+      extra_args+=(--fill-only)
+      ;;
+    lulc)
+      log "=== Filter: LULC masks only ==="
+      classified_input="${LULC_INPUT_DIR:-${FILL_INTERMEDIATE_DIR}}"
+      if [[ ! -d "${classified_input}" ]]; then
+        classified_input="${TEMPORAL_INTERMEDIATE_DIR}"
+      fi
+      extra_args+=(--lulc-only)
       ;;
     *)
       echo "ERROR: unknown filter mode: ${mode}" >&2
@@ -128,8 +138,13 @@ run_unified_filter() {
       ;;
   esac
 
-  if [[ ! -d "${classified_input}" && "${mode}" == "temporal" ]]; then
-    echo "ERROR: LULC-filtered input not found (run filter or lulc_filter first): ${classified_input}" >&2
+  if [[ "${mode}" == "fill_holes" && ! -d "${classified_input}" ]]; then
+    echo "ERROR: Temporal input not found (run temporal step first): ${classified_input}" >&2
+    exit 1
+  fi
+
+  if [[ "${mode}" == "lulc" && ! -d "${classified_input}" ]]; then
+    echo "ERROR: Input for LULC step not found: ${classified_input}" >&2
     exit 1
   fi
 
@@ -138,7 +153,8 @@ run_unified_filter() {
     --classified-dir "${classified_input}"
     --masks-dir "${TOTAL_MASKS_DIR}"
     --output-dir "${output_dir}"
-    --lulc-intermediate-dir "${lulc_dir}"
+    --temporal-intermediate-dir "${TEMPORAL_INTERMEDIATE_DIR}"
+    --fill-intermediate-dir "${FILL_INTERMEDIATE_DIR}"
     --from-year "${FROM_YEAR}"
     --to-year "${TO_YEAR}"
     --fill-value "${FILL_VALUE}"
@@ -146,26 +162,41 @@ run_unified_filter() {
     --temporal-suffix "${TEMPORAL_SUFFIX}"
     --year-token-index "${TEMPORAL_YEAR_TOKEN_INDEX}"
     --connectivity "${TEMPORAL_CONNECTIVITY}"
+    --max-hole-area "${MAX_HOLE_AREA}"
+    --fill-method "${FILL_METHOD}"
     --stats-json "${WORK_ROOT}/logs/filter_stats.json"
+    --fill-stats-json "${WORK_ROOT}/logs/fill_stats.json"
   )
   if [[ "${TEMPORAL_SPATIAL_MERGE}" == "1" ]]; then
     FILTER_ARGS+=(--spatial-merge)
   else
     FILTER_ARGS+=(--no-spatial-merge)
   fi
-  if [[ "${KEEP_LULC_INTERMEDIATE}" == "1" ]]; then
-    FILTER_ARGS+=(--keep-lulc-intermediate)
+  if [[ "${KEEP_TEMPORAL_INTERMEDIATE}" == "1" ]]; then
+    FILTER_ARGS+=(--keep-temporal-intermediate)
+  fi
+  if [[ "${KEEP_FILL_INTERMEDIATE}" == "1" ]]; then
+    FILTER_ARGS+=(--keep-fill-intermediate)
+  fi
+  if [[ "${SKIP_FILL_HOLES}" == "1" || "${FILL_HOLES}" == "0" ]]; then
+    FILTER_ARGS+=(--skip-fill)
   fi
   if [[ -n "${FILTER_NAME_CONTAINS}" ]]; then
     FILTER_ARGS+=(--name-contains "${FILTER_NAME_CONTAINS}")
-    log "Name filter (temporal): ${FILTER_NAME_CONTAINS}"
+    log "Name filter: ${FILTER_NAME_CONTAINS}"
   fi
   FILTER_ARGS+=("${extra_args[@]}")
 
   log "Classified input: ${classified_input}"
   log "Filter output:    ${output_dir}"
   if [[ "${mode}" == "full" ]]; then
-    log "LULC intermediate: ${lulc_dir} (keep=${KEEP_LULC_INTERMEDIATE})"
+    log "Temporal intermediate: ${TEMPORAL_INTERMEDIATE_DIR} (keep=${KEEP_TEMPORAL_INTERMEDIATE})"
+    log "Fill intermediate:     ${FILL_INTERMEDIATE_DIR} (keep=${KEEP_FILL_INTERMEDIATE})"
+    if [[ "${SKIP_FILL_HOLES}" == "1" || "${FILL_HOLES}" == "0" ]]; then
+      log "Hole fill: disabled"
+    else
+      log "Hole fill: ${FILL_METHOD}, max_hole_area=${MAX_HOLE_AREA} (0=unlimited)"
+    fi
   fi
   run_py "${FILTER_ARGS[@]}"
 }
@@ -187,9 +218,11 @@ if steps_need_raw_classified_dir; then
   require_var CLASSIFIED_DIR
 fi
 
-if step_enabled "filter" && [[ ! -d "${TOTAL_MASKS_DIR}" ]]; then
-  echo "ERROR: Masks dir not found (run mask steps first): ${TOTAL_MASKS_DIR}" >&2
-  exit 1
+if step_enabled "filter" || step_enabled "lulc_filter"; then
+  if [[ ! -d "${TOTAL_MASKS_DIR}" ]]; then
+    echo "ERROR: Masks dir not found (run mask steps first): ${TOTAL_MASKS_DIR}" >&2
+    exit 1
+  fi
 fi
 
 if steps_need_raw_classified_dir && [[ ! -d "${CLASSIFIED_DIR}" ]]; then
@@ -209,7 +242,7 @@ if steps_need_masks; then
 fi
 
 mkdir -p "${WORK_ROOT}/logs" "${ACCUMULATED_DIR}" "${YEARLY_MASKS_DIR}" "${TOTAL_MASKS_DIR}" \
-  "${FILTER_OUTPUT_DIR}" "${LULC_INTERMEDIATE_DIR}"
+  "${FILTER_OUTPUT_DIR}" "${TEMPORAL_INTERMEDIATE_DIR}" "${FILL_INTERMEDIATE_DIR}"
 cd "${REPO_ROOT}"
 
 log "REPO_ROOT=${REPO_ROOT}"
@@ -272,21 +305,28 @@ if step_enabled "filter"; then
   run_unified_filter full
 fi
 
-if step_enabled "lulc_filter"; then
-  run_unified_filter lulc
-fi
-
 if step_enabled "temporal_first_burn"; then
   run_unified_filter temporal
+fi
+
+if step_enabled "fill_holes"; then
+  run_unified_filter fill_holes
+fi
+
+if step_enabled "lulc_filter"; then
+  run_unified_filter lulc
 fi
 
 log "=== Pipeline finished ==="
 log "Accumulated masks: ${ACCUMULATED_DIR}"
 log "Yearly masks:      ${YEARLY_MASKS_DIR}"
 log "Total masks:       ${TOTAL_MASKS_DIR}/mascara_total_<year>.tif"
-if step_enabled "filter" || step_enabled "temporal_first_burn"; then
+if step_enabled "filter" || step_enabled "lulc_filter"; then
   log "Filtered output:   ${FILTER_OUTPUT_DIR}"
 fi
-if [[ "${KEEP_LULC_INTERMEDIATE}" == "1" ]] && { step_enabled "filter" || step_enabled "lulc_filter"; }; then
-  log "LULC intermediate: ${LULC_INTERMEDIATE_DIR}"
+if [[ "${KEEP_TEMPORAL_INTERMEDIATE}" == "1" ]] && { step_enabled "filter" || step_enabled "temporal_first_burn"; }; then
+  log "Temporal intermediate: ${TEMPORAL_INTERMEDIATE_DIR}"
+fi
+if [[ "${KEEP_FILL_INTERMEDIATE}" == "1" ]] && { step_enabled "filter" || step_enabled "fill_holes"; }; then
+  log "Fill intermediate:     ${FILL_INTERMEDIATE_DIR}"
 fi

@@ -10,9 +10,9 @@ Optional --spatial-merge: new burns in year Y that are 8-connected to an earlier
 scar are attributed to that origin year (dic 2017 / ene 2018 case). Default in the
 pipeline is off; use only when you need that extra rule beyond same-pixel dedup.
 
-Input: output of filter_classified_parallel.py (e.g. classified_filtered/).
+Input: raw classified tiles (default pipeline) or any per-year binary masks.
 Filenames should follow MapBiomas tiles, e.g.
-  b14_chile_r1_2013_cog_classified_filtered_20260512_130913.tif
+  b14_chile_r1_2013_cog_classified.tif
 with the calendar year at token index 3 (0-based) when splitting on "_".
 """
 
@@ -407,7 +407,7 @@ def main() -> int:
     parser.add_argument(
         "--input-dir",
         required=True,
-        help="Folder with LULC-filtered classified GeoTIFFs (e.g. classified_filtered/).",
+        help="Folder with per-year classified GeoTIFFs (e.g. raw classifier output).",
     )
     parser.add_argument("--output-dir", required=True, help="Output folder for deduplicated rasters.")
     parser.add_argument("--from-year", type=int, default=2013)

@@ -40,4 +40,7 @@ Logs: `~/logs/fire_class_filter_<JOBID>.out` / `.err`
 | `masks_total` | `mascara_total_<year>.tif` |
 | `filter` | LULC + temporal |
 
-`STEPS=all` ejecuta los cuatro. Polygonize y umbral: [README.md](README.md) § 4.
+`STEPS=all` ejecuta los cuatro.
+
+**Siguiente paso (vectorización):** pipeline auxiliar en [`../vectorize/CLUSTER.md`](../vectorize/CLUSTER.md).  
+Histogramas y umbral de polígonos: [README.md](README.md) § 5.

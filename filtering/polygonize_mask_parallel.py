@@ -7,71 +7,22 @@ For each input raster:
 - select pixels equal to mask value (default: 1)
 - convert connected mask pixels to polygons using raster grid geometry
 - write one GeoPackage (.gpkg)
+
+Implementation lives in ``lib.vectorize``; this script is a thin CLI wrapper.
 """
+
+from __future__ import annotations
 
 import argparse
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import sys
 from pathlib import Path
 
-import geopandas as gpd
-import numpy as np
-import rasterio
-from rasterio.features import shapes
-from shapely.geometry import shape
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-
-def polygonize_one_file(
-    tif_path: Path,
-    output_dir: Path,
-    band: int,
-    mask_value: float,
-    connectivity: int,
-) -> tuple[str, int]:
-    with rasterio.open(tif_path) as src:
-        data = src.read(band)
-        transform = src.transform
-        crs = src.crs
-
-    mask = data == mask_value
-    if not np.any(mask):
-        gdf_empty = gpd.GeoDataFrame(
-            {"source_file": [], "mask_value": []},
-            geometry=[],
-            crs=crs,
-        )
-        out_path = output_dir / f"{tif_path.stem}_mask{int(mask_value)}.gpkg"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        gdf_empty.to_file(out_path, driver="GPKG")
-        return str(out_path), 0
-
-    raster_for_shapes = np.where(mask, 1, 0).astype(np.uint8)
-
-    geoms = []
-    values = []
-    for geom, val in shapes(
-        raster_for_shapes,
-        mask=mask,
-        transform=transform,
-        connectivity=connectivity,
-    ):
-        if int(val) == 1:
-            geoms.append(shape(geom))
-            values.append(1)
-
-    gdf = gpd.GeoDataFrame(
-        {
-            "source_file": [tif_path.name] * len(geoms),
-            "mask_value": values,
-        },
-        geometry=geoms,
-        crs=crs,
-    )
-
-    out_path = output_dir / f"{tif_path.stem}_mask{int(mask_value)}.gpkg"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    gdf.to_file(out_path, driver="GPKG")
-    return str(out_path), len(geoms)
+from lib.vectorize import polygonize_directory  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -129,35 +80,21 @@ def main() -> int:
     if not input_dir.exists():
         raise FileNotFoundError(f"Input directory not found: {input_dir}")
 
-    tif_files = sorted(input_dir.glob(args.pattern))
-    if not tif_files:
-        raise RuntimeError(f"No rasters found in {input_dir} with pattern {args.pattern}")
+    suffix = f"_mask{int(args.mask_value)}"
+    summaries = polygonize_directory(
+        input_dir,
+        output_dir,
+        pattern=args.pattern,
+        band=args.band,
+        mask_value=args.mask_value,
+        connectivity=args.connectivity,
+        workers=args.workers,
+        output_suffix=suffix,
+    )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    workers = max(1, min(args.workers, len(tif_files)))
-
-    print(f"[INFO] Found {len(tif_files)} raster files.")
-    print(f"[INFO] Using {workers} parallel workers.")
-    print(f"[INFO] Polygonizing mask value = {args.mask_value}.")
-
-    total_polygons = 0
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = [
-            executor.submit(
-                polygonize_one_file,
-                tif_path,
-                output_dir,
-                args.band,
-                args.mask_value,
-                args.connectivity,
-            )
-            for tif_path in tif_files
-        ]
-
-        for future in as_completed(futures):
-            out_path, n_polygons = future.result()
-            total_polygons += n_polygons
-            print(f"[INFO] Wrote {out_path} (polygons={n_polygons})")
+    total_polygons = sum(row["polygon_count"] for row in summaries)
+    for row in summaries:
+        print(f"[INFO] Wrote {row['output_file']} (polygons={row['polygon_count']})")
 
     print(f"[INFO] Finished. Total polygons: {total_polygons}")
     return 0

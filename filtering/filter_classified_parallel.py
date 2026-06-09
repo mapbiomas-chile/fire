@@ -150,7 +150,11 @@ def main():
     if not masks_dir.exists():
         raise FileNotFoundError(f"Masks directory not found: {masks_dir}")
 
-    tif_files = sorted(input_dir.glob("*.tif"))
+    tif_files = sorted(
+        path
+        for path in input_dir.glob("*.tif")
+        if "_filtered_" not in path.stem
+    )
     if not tif_files:
         raise RuntimeError(f"No .tif files found in {input_dir}")
 

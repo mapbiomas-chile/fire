@@ -46,7 +46,7 @@ bash filtering/run_filtering_pipeline.sh
 
 ```bash
 export STEPS="masks_accumulated,masks_yearly,masks_total"   # solo máscaras
-export STEPS="filter"                                       # LULC + temporal
+export STEPS="filter"                                       # temporal + fill + LULC
 ```
 
 ## 4. Memoria
