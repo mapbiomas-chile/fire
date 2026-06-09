@@ -59,6 +59,7 @@ TO_YEAR="${TO_YEAR:-2025}"
 LULC_TO_YEAR="${LULC_TO_YEAR:-2024}"
 START_YEAR_BAND1="${START_YEAR_BAND1:-2000}"
 COPY_MASK_2025_FROM_2024="${COPY_MASK_2025_FROM_2024:-1}"
+LULC_STABILITY_WINDOW="${LULC_STABILITY_WINDOW:-4}"
 WORKERS="${WORKERS:-4}"
 FILL_VALUE="${FILL_VALUE:-0}"
 STEPS="${STEPS:-all}"
@@ -258,6 +259,7 @@ log "FILTER_OUTPUT_DIR=${FILTER_OUTPUT_DIR}"
 log "STEPS=${STEPS}"
 if steps_need_masks; then
   log "LULC mask years: ${FROM_YEAR}-${LULC_TO_YEAR} | Filter/classified years: ${FROM_YEAR}-${TO_YEAR}"
+  log "LULC stability window (A2): ${LULC_STABILITY_WINDOW} years"
 fi
 
 if step_enabled "masks_accumulated"; then
@@ -275,21 +277,37 @@ if step_enabled "masks_yearly"; then
     --start-year-in-band-1 "${START_YEAR_BAND1}" \
     --from-year "${FROM_YEAR}" \
     --to-year "${LULC_TO_YEAR}" \
+    --stability-window "${LULC_STABILITY_WINDOW}" \
     --workers "${WORKERS}"
 fi
 
-if [[ "${COPY_MASK_2025_FROM_2024}" == "1" ]] && step_enabled "masks_yearly"; then
-  log "=== Copy 2024 yearly masks → 2025 (LULC sin banda 2025) ==="
-  for stem in rio_lago infraestructura agricultura pastura; do
-    src="${YEARLY_MASKS_DIR}/mascara_${stem}_2024.tif"
-    dst="${YEARLY_MASKS_DIR}/mascara_${stem}_2025.tif"
-    if [[ ! -f "${src}" ]]; then
-      echo "ERROR: Missing ${src}" >&2
-      exit 1
-    fi
-    cp -f "${src}" "${dst}"
-    log "Copied: $(basename "${dst}")"
-  done
+if step_enabled "masks_yearly" && [[ "${TO_YEAR}" -gt "${LULC_TO_YEAR}" ]]; then
+  log "=== Yearly masks for ${TO_YEAR} (filter year > LULC_TO_YEAR=${LULC_TO_YEAR}) ==="
+  if run_py filtering/create_yearly_masks.py \
+    --input-tif "${LULC_STACK}" \
+    --output-dir "${YEARLY_MASKS_DIR}" \
+    --start-year-in-band-1 "${START_YEAR_BAND1}" \
+    --from-year "${TO_YEAR}" \
+    --to-year "${TO_YEAR}" \
+    --stability-window "${LULC_STABILITY_WINDOW}" \
+    --workers 1; then
+    log "Built stability masks for filter year ${TO_YEAR}"
+  elif [[ "${COPY_MASK_2025_FROM_2024}" == "1" ]]; then
+    log "WARN: Could not build ${TO_YEAR} masks from LULC stack; copying ${LULC_TO_YEAR} → ${TO_YEAR} (legacy fallback)"
+    for stem in rio_lago infraestructura agricultura pastura; do
+      src="${YEARLY_MASKS_DIR}/mascara_${stem}_${LULC_TO_YEAR}.tif"
+      dst="${YEARLY_MASKS_DIR}/mascara_${stem}_${TO_YEAR}.tif"
+      if [[ ! -f "${src}" ]]; then
+        echo "ERROR: Missing ${src}" >&2
+        exit 1
+      fi
+      cp -f "${src}" "${dst}"
+      log "Copied: $(basename "${dst}")"
+    done
+  else
+    echo "ERROR: No LULC band for filter year ${TO_YEAR} and COPY_MASK_2025_FROM_2024=0" >&2
+    exit 1
+  fi
 fi
 
 if step_enabled "masks_total"; then

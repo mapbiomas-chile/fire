@@ -76,7 +76,7 @@ Steps **1–4** (mask build + filter) can run together via `run_classified_filte
 | Ice / snow | 34 | `mascara_hielo_acumulado.tif` |
 | Non-vegetated | 25 | `mascara_sin_vegetacion_acumulado.tif` |
 
-**1b — Yearly** (`create_yearly_masks.py`): one mask per year for **variable** classes:
+**1b — Yearly** (`create_yearly_masks.py`): one mask per **filter year** Y for **variable** classes:
 
 | Class | Code | Output pattern |
 |-------|------|----------------|
@@ -85,7 +85,14 @@ Steps **1–4** (mask build + filter) can run together via `run_classified_filte
 | Agriculture | 15 | `mascara_agricultura_<year>.tif` |
 | Pasture | 18 | `mascara_pastura_<year>.tif` |
 
-Parallelizes by calendar year (`--workers`). If the LULC stack has no 2025 band, the pipeline can copy 2024 masks to 2025 (`COPY_MASK_2025_FROM_2024=1`).
+**Stability rule (default `LULC_STABILITY_WINDOW=4`):** for filter year **Y**, a pixel is marked only if it belongs to the class in **four consecutive LULC years**:
+
+- Usually **forward** from Y: `Y, Y+1, Y+2, Y+3` (e.g. filter 2017 → LULC 2017–2020).
+- Near the stack end: **backward** ending at Y (e.g. filter 2025 → LULC 2022–2025).
+
+The mask `mascara_*_Y.tif` is applied **only** to burn rasters of year **Y** (not to the other years in the window). Set `LULC_STABILITY_WINDOW=1` for legacy single-year masks.
+
+If the LULC stack has no band for filter year 2025, the pipeline tries to build 2025 masks from the stack; on failure it can copy 2024 → 2025 (`COPY_MASK_2025_FROM_2024=1`, legacy fallback).
 
 **1c — Total per year** (`create_total_masks_by_year.py`): combines accumulated + yearly masks into one raster per year. This is the input for the LULC filter on classified tiles.
 
@@ -97,7 +104,8 @@ python filtering/create_accumulated_class_masks.py \
 python filtering/create_yearly_masks.py \
   --input-tif /path/to/lulc_stack.tif \
   --output-dir /path/to/mascaras/by_year \
-  --start-year-in-band-1 2000 --from-year 2013 --to-year 2024
+  --start-year-in-band-1 2000 --from-year 2013 --to-year 2024 \
+  --stability-window 4
 
 python filtering/create_total_masks_by_year.py \
   --mascaras-root /path/to/mascaras \
@@ -306,6 +314,7 @@ bash filtering/run_filtering_pipeline.sh
 | `KEEP_FILL_INTERMEDIATE` | `1` = keep § 3 intermediate output |
 | `FROM_YEAR` / `TO_YEAR` | Year range (default 2013–2025) |
 | `LULC_TO_YEAR` | Last year with a real LULC band (default 2024) |
+| `LULC_STABILITY_WINDOW` | Consecutive LULC years for A2 classes (default `4`; `1` = legacy) |
 | `FILTER_NAME_CONTAINS` | Limit § 2–3 to certain filenames |
 | `TEMPORAL_SPATIAL_MERGE` | `1` = enable spatial merge (§ 2) |
 

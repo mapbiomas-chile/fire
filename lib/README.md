@@ -6,6 +6,7 @@ Reusable Python helpers for MapBiomas Fire Chile. **Pipelines** live in their ow
 
 | Module | Purpose |
 |--------|---------|
+| `lulc_stability.py` | 4-year LULC stability windows for yearly non-burnable masks (A2) |
 | `tile_metadata.py` | Parse calendar year, region (`r1`, `r2`, …) and tile id from MapBiomas filenames |
 | `vectorize.py` | Polygonize binary burn masks (raster → GeoDataFrame / GeoPackage) |
 | `vectorize_filtered_classified.py` | Low-level CLI (called by `vectorize/run_vectorize_pipeline.sh`) |

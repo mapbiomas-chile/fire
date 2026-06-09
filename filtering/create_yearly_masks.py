@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
-"""Create yearly binary masks for selected land-cover classes (time-varying)."""
+"""
+Create yearly binary masks for selected land-cover classes (time-varying).
+
+For each filter year Y, a pixel is marked only if the class is stable across a
+4-year LULC window (default): [Y, Y+1, Y+2, Y+3], or [Y-3..Y] near the stack end.
+The mask mascara_<class>_Y.tif applies only when filtering burn rasters of year Y.
+"""
 
 from __future__ import annotations
 
 import argparse
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 import rasterio
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from lib.lulc_stability import stability_window_years, year_to_band  # noqa: E402
 
 # (output stem, class id) — filenames: mascara_<stem>_<year>.tif
 TARGET_CLASSES = [
@@ -23,8 +36,10 @@ TARGET_CLASSES = [
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate yearly 0/1 masks per band from a multi-year land-cover stack: "
-            "rio_lago (33), infraestructura (24), agricultura (15), pastura (18)."
+            "Generate yearly 0/1 masks for rio_lago (33), infraestructura (24), "
+            "agricultura (15), pastura (18). "
+            "By default a pixel is marked only if the class is stable across a "
+            "forward 4-year LULC window anchored at the filter year."
         )
     )
     parser.add_argument("--input-tif", required=True, help="Input multi-band raster.")
@@ -43,42 +58,80 @@ def parse_args() -> argparse.Namespace:
         "--from-year",
         type=int,
         default=2013,
-        help="First year to export (default: 2013).",
+        help="First filter year to export (default: 2013).",
     )
     parser.add_argument(
         "--to-year",
         type=int,
         default=2024,
-        help="Last year to export, inclusive (default: 2024).",
+        help="Last filter year to export, inclusive (default: 2024).",
+    )
+    parser.add_argument(
+        "--stability-window",
+        type=int,
+        default=4,
+        help=(
+            "Number of consecutive LULC years that must match the class "
+            "(default: 4). Use 1 for legacy single-year masks."
+        ),
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=max(1, (os.cpu_count() or 1) - 1),
-        help=(
-            "Parallel workers (one year per process). Default: CPU count minus one."
-        ),
+        help="Parallel workers (one filter year per process).",
     )
     return parser.parse_args()
+
+
+def _read_window_stack(
+    src: rasterio.DatasetReader,
+    window_years: list[int],
+    start_year_in_band_1: int,
+) -> list[np.ndarray]:
+    arrays: list[np.ndarray] = []
+    for calendar_year in window_years:
+        band = year_to_band(calendar_year, start_year_in_band_1)
+        if band < 1 or band > src.count:
+            raise ValueError(
+                f"Year {calendar_year} maps to band {band}, outside raster range 1..{src.count}"
+            )
+        arrays.append(src.read(band))
+    return arrays
+
+
+def _stable_class_mask(window_arrays: list[np.ndarray], class_value: int) -> np.ndarray:
+    stable = np.ones(window_arrays[0].shape, dtype=bool)
+    for data in window_arrays:
+        stable &= data == class_value
+    return stable.astype(np.uint8)
 
 
 def _process_one_year(
     input_path_str: str,
     output_dir_str: str,
-    year: int,
+    filter_year: int,
     start_year_in_band_1: int,
-) -> tuple[int, int]:
-    """Write four mask GeoTIFFs for one year. Returns (year, files_written)."""
+    lulc_min_year: int,
+    lulc_max_year: int,
+    stability_window: int,
+) -> tuple[int, int, list[int]]:
+    """Write four mask GeoTIFFs for one filter year. Returns (year, files_written, window)."""
     input_path = Path(input_path_str)
     output_dir = Path(output_dir_str)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if stability_window == 1:
+        window_years = [filter_year]
+    else:
+        window_years = stability_window_years(
+            filter_year,
+            lulc_min_year=lulc_min_year,
+            lulc_max_year=lulc_max_year,
+            window_size=stability_window,
+        )
+
     with rasterio.open(input_path) as src:
-        band = year - start_year_in_band_1 + 1
-        if band < 1 or band > src.count:
-            raise ValueError(
-                f"Year {year} maps to band {band}, outside raster range 1..{src.count}"
-            )
         profile = src.profile.copy()
         profile.update(
             dtype=rasterio.uint8,
@@ -88,15 +141,17 @@ def _process_one_year(
             predictor=2,
             tiled=True,
         )
-        data = src.read(band)
+        window_arrays = _read_window_stack(src, window_years, start_year_in_band_1)
+
         n = 0
         for class_name, class_value in TARGET_CLASSES:
-            mask = (data == class_value).astype(np.uint8)
-            output_path = output_dir / f"mascara_{class_name}_{year}.tif"
+            mask = _stable_class_mask(window_arrays, class_value)
+            output_path = output_dir / f"mascara_{class_name}_{filter_year}.tif"
             with rasterio.open(output_path, "w", **profile) as dst:
                 dst.write(mask, 1)
             n += 1
-    return year, n
+
+    return filter_year, n, window_years
 
 
 def main() -> int:
@@ -110,6 +165,12 @@ def main() -> int:
         raise ValueError("--from-year must be <= --to-year")
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
+    if args.stability_window < 1:
+        raise ValueError("--stability-window must be >= 1")
+
+    with rasterio.open(input_path) as src:
+        lulc_min_year = args.start_year_in_band_1
+        lulc_max_year = args.start_year_in_band_1 + src.count - 1
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -117,13 +178,43 @@ def main() -> int:
     in_str = str(input_path.resolve())
     out_str = str(output_dir.resolve())
 
+    print(
+        f"[INFO] LULC stack years: {lulc_min_year}-{lulc_max_year} | "
+        f"filter years: {args.from_year}-{args.to_year} | "
+        f"stability_window={args.stability_window}",
+        flush=True,
+    )
+
+    def _report(year: int, n: int, window: list[int]) -> None:
+        print(
+            f"[INFO] Filter year {year}: wrote {n} mask TIFFs "
+            f"(LULC window {window[0]}-{window[-1]})",
+            flush=True,
+        )
+
+    task_kwargs = (
+        lulc_min_year,
+        lulc_max_year,
+        args.stability_window,
+    )
+
     if args.workers <= 1:
         for year in years:
-            _process_one_year(in_str, out_str, year, args.start_year_in_band_1)
-            print(f"[INFO] Year {year}: wrote 4 mask TIFFs")
+            y, n, window = _process_one_year(
+                in_str,
+                out_str,
+                year,
+                args.start_year_in_band_1,
+                *task_kwargs,
+            )
+            _report(y, n, window)
         return 0
 
-    print(f"[INFO] Parallel years with {args.workers} worker process(es), {len(years)} year(s)")
+    print(
+        f"[INFO] Parallel filter years with {args.workers} worker process(es), "
+        f"{len(years)} year(s)",
+        flush=True,
+    )
     with ProcessPoolExecutor(max_workers=args.workers) as ex:
         futures = {
             ex.submit(
@@ -132,16 +223,17 @@ def main() -> int:
                 out_str,
                 year,
                 args.start_year_in_band_1,
+                *task_kwargs,
             ): year
             for year in years
         }
         for fut in as_completed(futures):
             year = futures[fut]
             try:
-                y, n = fut.result()
-                print(f"[INFO] Year {y}: wrote {n} mask TIFFs")
+                y, n, window = fut.result()
             except Exception as e:
-                raise RuntimeError(f"Failed year {year}") from e
+                raise RuntimeError(f"Failed filter year {year}") from e
+            _report(y, n, window)
 
     return 0
 
