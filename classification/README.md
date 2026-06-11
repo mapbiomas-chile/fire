@@ -12,7 +12,8 @@ Training and inference scripts for the MapBiomas Chile burned-area neural networ
 | `classify_fire_model.py` | Runs inference on one or more mosaic TIFFs and applies morphological opening/closing. |
 | `classify_fire_model.sh` | Minimal local launcher for `classify_fire_model.py`. |
 | `run_classify_fire_model_slurm.sh` | Slurm job that classifies a single `(model, mosaic)` pair. |
-| `run_classify_fire_array_slurm.sh` | Slurm array wrapper that reads `(model, mosaic)` rows from a CSV and dispatches one classification job per row. |
+| `run_classify_region_slurm.sh` | Slurm job that classifies a **region + year range** with a given model version (reprocessing). |
+| `cluster_paths.env.example` | Local path/config template for `run_classify_region_slurm.sh`. |
 | `run_classify_tiles.py` | Helper that submits `run_classify_fire_model_slurm.sh` for all configured regions/years. |
 
 ## Model overview
@@ -77,21 +78,36 @@ Edit the model path and mosaic path inside the script before running.
 
 ### Run on Slurm (NLHPC)
 
-Single job:
+**One mosaic per job:**
 
 ```bash
 sbatch run_classify_fire_model_slurm.sh <model_name> <mosaic_name>
 ```
 
-The launcher resolves the model from `~/mapbiomas/models/<model_name>` and the mosaic from `~/mapbiomas/mosaics_cog/<mosaic_name>` and writes to `~/mapbiomas/output/classified`.
+Example: `sbatch run_classify_fire_model_slurm.sh col1_chile_v2_r2_rnn_lstm_ckpt b14_chile_r2_2019_cog.tif`
 
-Array job (CSV-driven):
+Edit `MODEL_PATH`, `MOSAIC_PATH`, and `--output-dir` inside the script if your paths differ from the defaults.
+
+**Region + year range (reprocessing):**
 
 ```bash
-sbatch --array=1-N run_classify_fire_array_slurm.sh <csv_file> [has_header]
+cp classification/cluster_paths.env.example classification/cluster_paths.env
+# edit REGION, MODEL_VERSION, START_YEAR, END_YEAR, paths
+source classification/cluster_paths.env
+sbatch classification/run_classify_region_slurm.sh
 ```
 
-Each row of `<csv_file>` must be `model_name,mosaic_name`. `has_header` is `1` when the first line is a header (default) and `0` otherwise. Every array task then shells out to `run_classify_fire_model_slurm.sh`.
+Or without a config file:
+
+```bash
+export REGION=r2 MODEL_VERSION=v2 START_YEAR=2019 END_YEAR=2025
+export OUTPUT_DIR="$HOME/classi_v2/r2_v2"
+sbatch classification/run_classify_region_slurm.sh
+```
+
+The job reads mosaics `b14_chile_<region>_<year>_cog.tif`, uses checkpoint `col1_chile_<version>_<region>_rnn_lstm_ckpt`, and writes `<mosaic_stem>_classified.tif` under `OUTPUT_DIR`. Override the checkpoint name with `MODEL_NAME` in `cluster_paths.env` if needed.
+
+Legacy per-region scripts (`run_classify_fire_model_slurm_r6.sh`, `run_classify_fire_model_slurm_v2.sh`) remain for older runs; prefer `run_classify_region_slurm.sh` for new reprocessing.
 
 ### Bulk submission helper
 

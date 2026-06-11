@@ -1,4 +1,5 @@
 #!/bin/bash
+# Legacy: r6 fijo 2019-2025 v2. Para otras regiones/años usar run_classify_region_slurm.sh
 #---------------Script SBATCH - NLHPC ----------------
 #SBATCH -J classi_fire_model
 #SBATCH -p main
