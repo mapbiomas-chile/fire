@@ -49,7 +49,7 @@ See [CLUSTER.md](CLUSTER.md) for NLHPC details.
 
 ## National vectorization (Chile by year)
 
-Merges all regional tiles into **one raster per year**, optionally **removes isolated patches** below a minimum area (default **1 ha**), polygonizes, then groups nearby scars into **multipolygon fire events** when fragments are within **200 m** (configurable).
+Merges all regional tiles into **one raster per year**, optionally **removes isolated patches** below a minimum size in **connected pixels** (default **112**), polygonizes, then groups nearby scars into **multipolygon fire events** when fragments are within **200 m** (configurable).
 
 ```bash
 source vectorize/cluster_paths.env
@@ -91,11 +91,11 @@ sbatch vectorize/run_vectorize_national_pipeline_slurm.sh
 | `VECTORIZE_NATIONAL_FROM_YEAR` / `TO_YEAR` | `2013` / `2025` | Year range |
 | `VECTORIZE_NATIONAL_MERGE_WORKERS` | `2` | Parallel yearly mosaic jobs |
 | `VECTORIZE_NATIONAL_KEEP_RAW` | `0` | Set `1` to keep ungrouped polygons |
-| `VECTORIZE_NATIONAL_SIEVE_MIN_HA` | `1` | Min patch area (ha); pixel count from raster |
-| `VECTORIZE_NATIONAL_SIEVE_MIN_PIXELS` | — | Override ha rule (e.g. `112`) |
+| `VECTORIZE_NATIONAL_SIEVE_MIN_PIXELS` | `112` | Min connected burn component (pixels); overrides ha |
+| `VECTORIZE_NATIONAL_SIEVE_MIN_HA` | — | Optional ha rule instead of pixels |
 | `VECTORIZE_NATIONAL_SKIP_SIEVE` | `0` | Set `1` to disable pre-vectorize sieve |
-| `VECTORIZE_NATIONAL_FRAGMENT_MIN_HA` | `1` | Min polygon area (ha) before 200 m grouping |
-| `VECTORIZE_NATIONAL_SKIP_FRAGMENT_FILTER` | `0` | Set `1` to allow small fragments into grouping |
+| `VECTORIZE_NATIONAL_FRAGMENT_MIN_HA` | — | Optional min polygon area (ha) before 200 m grouping |
+| `VECTORIZE_NATIONAL_SKIP_FRAGMENT_FILTER` | `1` | Set `0` + `FRAGMENT_MIN_HA` to enable ha filter |
 
 Implementation: [`lib/vectorize_national_by_year.py`](../lib/vectorize_national_by_year.py).
 
