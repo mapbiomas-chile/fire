@@ -22,8 +22,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from lib.group_fire_events import group_polygons_by_distance, summarize_grouping  # noqa: E402
+from lib.group_fire_events import (  # noqa: E402
+    filter_fragments_by_min_area,
+    group_polygons_by_distance,
+    summarize_grouping,
+)
 from lib.raster_by_year import merge_directory_by_year  # noqa: E402
+from lib.sieve_burn_mask import sieve_raster_file  # noqa: E402
 from lib.vectorize import polygonize_raster_file  # noqa: E402
 
 
@@ -54,6 +59,44 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mask-value", type=float, default=1)
     parser.add_argument("--connectivity", type=int, choices=(4, 8), default=8)
     parser.add_argument("--merge-workers", type=int, default=1)
+    parser.add_argument(
+        "--sieve-min-pixels",
+        type=int,
+        default=None,
+        help="Remove connected burn components smaller than N pixels (overrides --sieve-min-ha).",
+    )
+    parser.add_argument(
+        "--sieve-min-ha",
+        type=float,
+        default=None,
+        help="Remove components smaller than this area in ha (from raster pixel size).",
+    )
+    parser.add_argument(
+        "--skip-sieve",
+        action="store_true",
+        help="Do not remove small isolated burn patches before polygonize.",
+    )
+    parser.add_argument(
+        "--sieve-connectivity",
+        type=int,
+        choices=(4, 8),
+        default=8,
+        help="Connectivity for the pre-vectorize sieve (default: 8).",
+    )
+    parser.add_argument(
+        "--fragment-min-ha",
+        type=float,
+        default=None,
+        help=(
+            "Drop polygon fragments below this area (ha) before 200 m grouping. "
+            "Prevents small survivors from being absorbed into nearby events."
+        ),
+    )
+    parser.add_argument(
+        "--skip-fragment-filter",
+        action="store_true",
+        help="Do not drop small polygons before proximity grouping.",
+    )
     parser.add_argument("--stats-json", default=None)
     return parser.parse_args()
 
@@ -117,22 +160,53 @@ def main() -> int:
             )
 
     year_summaries: list[dict] = []
+    sieve_enabled = not args.skip_sieve and (
+        args.sieve_min_pixels is not None or args.sieve_min_ha is not None
+    )
+    if sieve_enabled:
+        mosaics_sieved_dir = work_root / "mosaics_by_year_sieved"
+        mosaics_sieved_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        mosaics_sieved_dir = None
+
     for merge_row in sorted(merge_summaries, key=lambda r: r["year"]):
         year = merge_row["year"]
         mosaic_path = Path(merge_row["output_file"])
+
+        polygonize_raster = mosaic_path
+        sieve_stats = None
+        if sieve_enabled:
+            assert mosaics_sieved_dir is not None
+            sieved_path = mosaics_sieved_dir / mosaic_path.name
+            sieve_stats = sieve_raster_file(
+                mosaic_path,
+                min_pixels=args.sieve_min_pixels,
+                min_area_ha=args.sieve_min_ha,
+                mask_value=args.mask_value,
+                connectivity=args.sieve_connectivity,
+                output_path=sieved_path,
+            )
+            polygonize_raster = sieved_path
+            print(
+                f"[INFO] Year {year}: sieve "
+                f"{sieve_stats['components_before']} → {sieve_stats['components_after']} components "
+                f"(min_pixels={sieve_stats['min_pixels']}, "
+                f"removed {sieve_stats['pixels_removed']} px) → {sieved_path.name}",
+                flush=True,
+            )
 
         raw_gpkg = raw_dir / f"{args.mosaic_stem}_{year}_raw.gpkg"
         scratch_gpkg = scratch_dir / f"{args.mosaic_stem}_{year}_raw.gpkg"
         polygonize_target = raw_gpkg if (args.keep_raw_polygons or args.skip_group) else scratch_gpkg
 
         raw_summary = polygonize_raster_file(
-            mosaic_path,
+            polygonize_raster,
             polygonize_target,
             mask_value=args.mask_value,
             connectivity=args.connectivity,
             year=year,
             region=None,
-            source_file=mosaic_path.name,
+            source_file=polygonize_raster.name,
         )
         print(
             f"[INFO] Year {year}: polygonized {raw_summary['polygon_count']} fragments",
@@ -144,6 +218,8 @@ def main() -> int:
                 {
                     "year": year,
                     "mosaic": str(mosaic_path),
+                    "mosaic_sieved": str(polygonize_raster) if sieve_stats else None,
+                    "sieve": sieve_stats,
                     "raw_gpkg": str(polygonize_target),
                     "events_gpkg": None,
                     **raw_summary,
@@ -152,8 +228,28 @@ def main() -> int:
             continue
 
         gdf_raw = gpd.read_file(polygonize_target)
+
+        fragment_filter_stats = None
+        gdf_for_grouping = gdf_raw
+        fragment_min_ha = args.fragment_min_ha
+        if fragment_min_ha is None and sieve_enabled and args.sieve_min_ha is not None:
+            fragment_min_ha = args.sieve_min_ha
+        if not args.skip_fragment_filter and fragment_min_ha is not None:
+            gdf_for_grouping, fragment_filter_stats = filter_fragments_by_min_area(
+                gdf_raw,
+                min_area_ha=fragment_min_ha,
+                metric_crs=args.metric_crs,
+            )
+            print(
+                f"[INFO] Year {year}: fragment filter ≥ {fragment_min_ha} ha: "
+                f"{fragment_filter_stats['fragments_before']} → "
+                f"{fragment_filter_stats['fragments_kept']} "
+                f"(removed {fragment_filter_stats['fragments_removed']})",
+                flush=True,
+            )
+
         grouped = group_polygons_by_distance(
-            gdf_raw,
+            gdf_for_grouping,
             max_gap_m=args.group_distance_m,
             metric_crs=args.metric_crs,
             event_id_prefix=f"{args.mosaic_stem}_{year}",
@@ -164,7 +260,7 @@ def main() -> int:
         if not args.keep_raw_polygons and scratch_gpkg.exists():
             scratch_gpkg.unlink()
 
-        grouping_stats = summarize_grouping(len(gdf_raw), grouped)
+        grouping_stats = summarize_grouping(len(gdf_for_grouping), grouped)
         print(
             f"[INFO] Year {year}: {grouping_stats['raw_polygon_count']} fragments → "
             f"{grouping_stats['event_count']} events "
@@ -175,9 +271,13 @@ def main() -> int:
             {
                 "year": year,
                 "mosaic": str(mosaic_path),
+                "mosaic_sieved": str(polygonize_raster) if sieve_stats else None,
+                "sieve": sieve_stats,
+                "fragment_filter": fragment_filter_stats,
                 "raw_gpkg": str(raw_gpkg) if raw_gpkg.exists() else None,
                 "events_gpkg": str(events_gpkg),
                 "group_distance_m": args.group_distance_m,
+                "fragment_min_ha": fragment_min_ha,
                 **raw_summary,
                 **grouping_stats,
             }
@@ -191,6 +291,10 @@ def main() -> int:
             "work_root": str(work_root),
             "merge_method": args.merge_method,
             "group_distance_m": args.group_distance_m,
+            "sieve_min_pixels": args.sieve_min_pixels,
+            "sieve_min_ha": args.sieve_min_ha,
+            "sieve_enabled": sieve_enabled,
+            "fragment_min_ha": args.fragment_min_ha,
             "years": year_summaries,
         }
         stats_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

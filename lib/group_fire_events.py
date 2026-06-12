@@ -140,6 +140,33 @@ def group_polygons_by_distance(
     return out
 
 
+def filter_fragments_by_min_area(
+    gdf: gpd.GeoDataFrame,
+    *,
+    min_area_ha: float,
+    metric_crs: str = "EPSG:32719",
+) -> tuple[gpd.GeoDataFrame, dict]:
+    """Drop polygon fragments below ``min_area_ha`` before proximity grouping."""
+    if gdf.empty or min_area_ha <= 0:
+        return gdf, {
+            "fragment_min_area_ha": float(min_area_ha),
+            "fragments_before": len(gdf),
+            "fragments_removed": 0,
+            "fragments_kept": len(gdf),
+        }
+
+    projected = gdf.to_crs(metric_crs)
+    areas_ha = projected.geometry.area / 10000.0
+    keep = areas_ha >= min_area_ha
+    removed = int((~keep).sum())
+    return gdf.loc[keep].copy(), {
+        "fragment_min_area_ha": float(min_area_ha),
+        "fragments_before": len(gdf),
+        "fragments_removed": removed,
+        "fragments_kept": int(keep.sum()),
+    }
+
+
 def summarize_grouping(raw_count: int, grouped: gpd.GeoDataFrame) -> dict:
     return {
         "raw_polygon_count": int(raw_count),
