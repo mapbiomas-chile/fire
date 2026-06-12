@@ -3,12 +3,18 @@
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from lib.tile_metadata import parse_calendar_year, parse_region
 
 ALLOWED_REGIONS = {"1", "2", "4", "6"}
 
@@ -46,13 +52,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def extract_region(path: Path) -> str | None:
-    match = re.search(r"_r([0-9]+)_", path.stem)
-    if not match:
-        return None
-    region = match.group(1)
-    if region not in ALLOWED_REGIONS:
+    region = parse_region(path)
+    if region is None or region not in ALLOWED_REGIONS:
         return None
     return region
+
+
+def extract_year(path: Path) -> int | None:
+    return parse_calendar_year(path)
 
 
 def load_area_ha(gpkg_path: Path, target_crs: str) -> np.ndarray:
@@ -76,6 +83,8 @@ def save_histogram(
     xscale: str,
     bins: int,
     linear_ref_ticks: list[float],
+    *,
+    title: str | None = None,
 ) -> None:
     out_png.parent.mkdir(parents=True, exist_ok=True)
 
@@ -100,7 +109,7 @@ def save_histogram(
             ax.hist(valid, bins=bins, color="#2a9d8f", alpha=0.9)
         ax.set_xlabel(f"Area (ha, {xscale})")
         ax.set_ylabel("Cantidad de poligonos")
-        ax.set_title("Histograma de area de poligonos")
+        ax.set_title(title or "Histograma de area de poligonos")
         ax.grid(True, alpha=0.2)
 
     fig.tight_layout()
@@ -133,15 +142,20 @@ def main() -> int:
     for region, region_files in grouped.items():
         region_total_polygons = 0
         for path in region_files:
+            year = extract_year(path)
+            if year is None:
+                print(f"[WARNING] Could not parse year from {path.name}; skipping")
+                skipped += 1
+                continue
+
             area = load_area_ha(path, args.target_crs)
             region_total_polygons += len(area)
 
-            # Keep source stem to avoid overwrite across files/years.
             hist_path = (
                 output_dir
                 / f"region_{region}"
-                / "histogramas"
-                / f"histograma_{path.stem}.png"
+                / str(year)
+                / "histograma_area.png"
             )
             save_histogram(
                 area,
@@ -149,6 +163,7 @@ def main() -> int:
                 args.xscale,
                 args.bins,
                 args.linear_ref_ticks,
+                title=f"Region {region} — {year} (n={len(area):,} poligonos)",
             )
             print(f"[INFO] Wrote {hist_path} (polygons={len(area)})")
 

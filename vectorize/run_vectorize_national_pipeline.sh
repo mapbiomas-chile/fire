@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# MapBiomas Fire — vectorización nacional por año (Chile)
+#
+# Fusiona teselas por año → polygoniza → agrupa cicatrices a ≤200 m (multipolígonos).
+#
+#   cp vectorize/cluster_paths.env.example vectorize/cluster_paths.env
+#   nano vectorize/cluster_paths.env
+#   source vectorize/cluster_paths.env
+#   bash vectorize/run_vectorize_national_pipeline.sh
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+PATHS_FILE="${VECTORIZE_PATHS_FILE:-${SCRIPT_DIR}/cluster_paths.env}"
+
+_preserve_PYTHON="${PYTHON:-}"
+_preserve_WORK_ROOT="${WORK_ROOT:-}"
+_preserve_VECTORIZE_INPUT_DIR="${VECTORIZE_INPUT_DIR:-}"
+_preserve_VECTORIZE_NATIONAL_WORK_ROOT="${VECTORIZE_NATIONAL_WORK_ROOT:-}"
+_preserve_VECTORIZE_NATIONAL_GROUP_DISTANCE_M="${VECTORIZE_NATIONAL_GROUP_DISTANCE_M:-}"
+_preserve_VECTORIZE_NATIONAL_FROM_YEAR="${VECTORIZE_NATIONAL_FROM_YEAR:-}"
+_preserve_VECTORIZE_NATIONAL_TO_YEAR="${VECTORIZE_NATIONAL_TO_YEAR:-}"
+_preserve_VECTORIZE_NATIONAL_KEEP_RAW="${VECTORIZE_NATIONAL_KEEP_RAW:-}"
+_preserve_VECTORIZE_NATIONAL_STATS_JSON="${VECTORIZE_NATIONAL_STATS_JSON:-}"
+
+if [[ -f "${PATHS_FILE}" ]]; then
+  # shellcheck source=/dev/null
+  source "${PATHS_FILE}"
+fi
+
+[[ -n "${_preserve_PYTHON}" ]] && PYTHON="${_preserve_PYTHON}"
+[[ -n "${_preserve_WORK_ROOT}" ]] && WORK_ROOT="${_preserve_WORK_ROOT}"
+[[ -n "${_preserve_VECTORIZE_INPUT_DIR}" ]] && VECTORIZE_INPUT_DIR="${_preserve_VECTORIZE_INPUT_DIR}"
+[[ -n "${_preserve_VECTORIZE_NATIONAL_WORK_ROOT}" ]] && VECTORIZE_NATIONAL_WORK_ROOT="${_preserve_VECTORIZE_NATIONAL_WORK_ROOT}"
+[[ -n "${_preserve_VECTORIZE_NATIONAL_GROUP_DISTANCE_M}" ]] && VECTORIZE_NATIONAL_GROUP_DISTANCE_M="${_preserve_VECTORIZE_NATIONAL_GROUP_DISTANCE_M}"
+[[ -n "${_preserve_VECTORIZE_NATIONAL_FROM_YEAR}" ]] && VECTORIZE_NATIONAL_FROM_YEAR="${_preserve_VECTORIZE_NATIONAL_FROM_YEAR}"
+[[ -n "${_preserve_VECTORIZE_NATIONAL_TO_YEAR}" ]] && VECTORIZE_NATIONAL_TO_YEAR="${_preserve_VECTORIZE_NATIONAL_TO_YEAR}"
+[[ -n "${_preserve_VECTORIZE_NATIONAL_KEEP_RAW}" ]] && VECTORIZE_NATIONAL_KEEP_RAW="${_preserve_VECTORIZE_NATIONAL_KEEP_RAW}"
+[[ -n "${_preserve_VECTORIZE_NATIONAL_STATS_JSON}" ]] && VECTORIZE_NATIONAL_STATS_JSON="${_preserve_VECTORIZE_NATIONAL_STATS_JSON}"
+
+PYTHON="${PYTHON:-}"
+if [[ -z "${PYTHON}" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON="$(command -v python)"
+  fi
+fi
+
+WORK_ROOT="${WORK_ROOT:-}"
+VECTORIZE_INPUT_DIR="${VECTORIZE_INPUT_DIR:-${WORK_ROOT}/classified_filtered}"
+VECTORIZE_NATIONAL_WORK_ROOT="${VECTORIZE_NATIONAL_WORK_ROOT:-${WORK_ROOT}/national_vector}"
+VECTORIZE_NATIONAL_GROUP_DISTANCE_M="${VECTORIZE_NATIONAL_GROUP_DISTANCE_M:-200}"
+VECTORIZE_NATIONAL_FROM_YEAR="${VECTORIZE_NATIONAL_FROM_YEAR:-2013}"
+VECTORIZE_NATIONAL_TO_YEAR="${VECTORIZE_NATIONAL_TO_YEAR:-2025}"
+VECTORIZE_NATIONAL_MERGE_WORKERS="${VECTORIZE_NATIONAL_MERGE_WORKERS:-2}"
+VECTORIZE_NATIONAL_KEEP_RAW="${VECTORIZE_NATIONAL_KEEP_RAW:-0}"
+VECTORIZE_NATIONAL_STATS_JSON="${VECTORIZE_NATIONAL_STATS_JSON:-${VECTORIZE_NATIONAL_WORK_ROOT}/logs/national_vectorize_stats.json}"
+
+CONFIG_HINT="Set variables in ${PATHS_FILE} (copy from cluster_paths.env.example) or export them."
+
+log() { echo "[$(date -Iseconds)] $*"; }
+
+require_var() {
+  local name="$1"
+  if [[ -z "${!name:-}" ]]; then
+    echo "ERROR: ${name} is not set. ${CONFIG_HINT}" >&2
+    exit 1
+  fi
+}
+
+require_var PYTHON
+if [[ ! -x "${PYTHON}" && ! -f "${PYTHON}" ]]; then
+  echo "ERROR: PYTHON not found: ${PYTHON}" >&2
+  exit 1
+fi
+
+require_var VECTORIZE_INPUT_DIR
+if [[ ! -d "${VECTORIZE_INPUT_DIR}" ]]; then
+  echo "ERROR: VECTORIZE_INPUT_DIR not found: ${VECTORIZE_INPUT_DIR}" >&2
+  exit 1
+fi
+
+mkdir -p "${VECTORIZE_NATIONAL_WORK_ROOT}" "$(dirname "${VECTORIZE_NATIONAL_STATS_JSON}")"
+cd "${REPO_ROOT}"
+
+log "REPO_ROOT=${REPO_ROOT}"
+log "VECTORIZE_INPUT_DIR=${VECTORIZE_INPUT_DIR}"
+log "VECTORIZE_NATIONAL_WORK_ROOT=${VECTORIZE_NATIONAL_WORK_ROOT}"
+log "GROUP_DISTANCE_M=${VECTORIZE_NATIONAL_GROUP_DISTANCE_M}"
+log "YEARS=${VECTORIZE_NATIONAL_FROM_YEAR}-${VECTORIZE_NATIONAL_TO_YEAR}"
+
+ARGS=(
+  lib/vectorize_national_by_year.py
+  --input-dir "${VECTORIZE_INPUT_DIR}"
+  --work-root "${VECTORIZE_NATIONAL_WORK_ROOT}"
+  --from-year "${VECTORIZE_NATIONAL_FROM_YEAR}"
+  --to-year "${VECTORIZE_NATIONAL_TO_YEAR}"
+  --group-distance-m "${VECTORIZE_NATIONAL_GROUP_DISTANCE_M}"
+  --merge-workers "${VECTORIZE_NATIONAL_MERGE_WORKERS}"
+  --stats-json "${VECTORIZE_NATIONAL_STATS_JSON}"
+)
+
+if [[ "${VECTORIZE_NATIONAL_KEEP_RAW}" == "1" ]]; then
+  ARGS+=(--keep-raw-polygons)
+  log "Keeping raw (ungrouped) polygons in polygons_raw/"
+fi
+
+log "RUN: ${PYTHON} ${ARGS[*]}"
+"${PYTHON}" "${ARGS[@]}"
+
+log "=== National vectorize pipeline finished ==="
+log "Yearly mosaics:  ${VECTORIZE_NATIONAL_WORK_ROOT}/mosaics_by_year/"
+log "Chile events:    ${VECTORIZE_NATIONAL_WORK_ROOT}/polygons_chile/"
+log "Stats:           ${VECTORIZE_NATIONAL_STATS_JSON}"

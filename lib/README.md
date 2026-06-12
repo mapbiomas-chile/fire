@@ -9,7 +9,10 @@ Reusable Python helpers for MapBiomas Fire Chile. **Pipelines** live in their ow
 | `lulc_stability.py` | 4-year LULC stability windows for yearly non-burnable masks (A2) |
 | `tile_metadata.py` | Parse calendar year, region (`r1`, `r2`, …) and tile id from MapBiomas filenames |
 | `vectorize.py` | Polygonize binary burn masks (raster → GeoDataFrame / GeoPackage) |
-| `vectorize_filtered_classified.py` | Low-level CLI (called by `vectorize/run_vectorize_pipeline.sh`) |
+| `vectorize_filtered_classified.py` | Per-tile vectorization CLI |
+| `vectorize_national_by_year.py` | Merge tiles by year → polygonize Chile → group events |
+| `raster_by_year.py` | Merge regional rasters into one GeoTIFF per calendar year |
+| `group_fire_events.py` | Group nearby polygons into multipolygon fire events |
 
 ## Vectorization pipeline
 
@@ -24,6 +27,8 @@ bash vectorize/run_vectorize_pipeline.sh
 On NLHPC: `sbatch vectorize/run_vectorize_pipeline_slurm.sh`
 
 Full docs: [vectorize/README.md](../vectorize/README.md).
+
+**National (Chile-wide by year):** [vectorize/run_vectorize_national_pipeline.sh](../vectorize/run_vectorize_national_pipeline.sh) — merge tiles → polygonize → group scars within 200 m (configurable).
 
 ## Dependencies
 
