@@ -191,9 +191,20 @@ def main() -> int:
                 f"[INFO] Year {year}: sieve "
                 f"{sieve_stats['components_before']} → {sieve_stats['components_after']} components "
                 f"(min_pixels={sieve_stats['min_pixels']}, "
+                f"pixel_area_m2={sieve_stats.get('pixel_area_m2', '?'):.2f}, "
+                f"burned {sieve_stats['burned_pixels_before']} → {sieve_stats['burned_pixels_after']} px, "
                 f"removed {sieve_stats['pixels_removed']} px) → {sieved_path.name}",
                 flush=True,
             )
+            if (
+                sieve_stats["burned_pixels_before"] > 0
+                and sieve_stats["burned_pixels_after"] == 0
+            ):
+                print(
+                    f"[WARN] Year {year}: sieve removed ALL burned pixels — "
+                    f"check CRS/min_pixels (crs={sieve_stats.get('crs')}).",
+                    flush=True,
+                )
 
         raw_gpkg = raw_dir / f"{args.mosaic_stem}_{year}_raw.gpkg"
         scratch_gpkg = scratch_dir / f"{args.mosaic_stem}_{year}_raw.gpkg"
@@ -212,6 +223,11 @@ def main() -> int:
             f"[INFO] Year {year}: polygonized {raw_summary['polygon_count']} fragments",
             flush=True,
         )
+        if raw_summary["polygon_count"] == 0:
+            print(
+                f"[WARN] Year {year}: no polygons — inspect {polygonize_raster}",
+                flush=True,
+            )
 
         if args.skip_group:
             year_summaries.append(
@@ -247,6 +263,15 @@ def main() -> int:
                 f"(removed {fragment_filter_stats['fragments_removed']})",
                 flush=True,
             )
+            if (
+                fragment_filter_stats["fragments_before"] > 0
+                and fragment_filter_stats["fragments_kept"] == 0
+            ):
+                print(
+                    f"[WARN] Year {year}: fragment filter removed ALL polygons "
+                    f"(threshold {fragment_min_ha} ha).",
+                    flush=True,
+                )
 
         grouped = group_polygons_by_distance(
             gdf_for_grouping,
