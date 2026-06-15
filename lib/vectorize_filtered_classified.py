@@ -64,6 +64,24 @@ def parse_args() -> argparse.Namespace:
         default=8,
         help="Pixel connectivity (default: 8).",
     )
+    parser.add_argument(
+        "--sieve-min-pixels",
+        type=int,
+        default=None,
+        help="Remove connected burn components smaller than N pixels before polygonize.",
+    )
+    parser.add_argument(
+        "--skip-sieve",
+        action="store_true",
+        help="Polygonize without removing small connected components.",
+    )
+    parser.add_argument(
+        "--sieve-connectivity",
+        type=int,
+        choices=(4, 8),
+        default=8,
+        help="Connectivity for the pre-vectorize sieve (default: 8).",
+    )
     parser.add_argument("--workers", type=int, default=None, help="Parallel workers.")
     parser.add_argument(
         "--output-suffix",
@@ -99,6 +117,8 @@ def main() -> int:
         band=args.band,
         mask_value=args.mask_value,
         connectivity=args.connectivity,
+        sieve_min_pixels=None if args.skip_sieve else args.sieve_min_pixels,
+        sieve_connectivity=args.sieve_connectivity,
         workers=args.workers,
         output_suffix=args.output_suffix,
     )

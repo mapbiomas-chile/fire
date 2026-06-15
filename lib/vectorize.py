@@ -14,6 +14,7 @@ from rasterio.features import shapes
 from shapely.geometry import shape
 
 from lib.tile_metadata import parse_calendar_year, parse_region
+from lib.sieve_burn_mask import sieve_connected_components
 
 
 def polygonize_burn_mask(
@@ -50,6 +51,8 @@ def polygonize_raster_file(
     band: int = 1,
     mask_value: float = 1,
     connectivity: int = 8,
+    sieve_min_pixels: int | None = None,
+    sieve_connectivity: int = 8,
     year: int | None = None,
     region: str | None = None,
     source_file: str | None = None,
@@ -62,9 +65,17 @@ def polygonize_raster_file(
     tif_path = Path(tif_path)
     output_path = Path(output_path)
 
+    sieve_stats = None
     with rasterio.open(tif_path) as src:
         data = src.read(band)
         crs = src.crs
+        if sieve_min_pixels is not None and sieve_min_pixels >= 1:
+            data, sieve_stats = sieve_connected_components(
+                data,
+                min_pixels=sieve_min_pixels,
+                mask_value=mask_value,
+                connectivity=sieve_connectivity,
+            )
         gdf = polygonize_burn_mask(
             data,
             src.transform,
@@ -105,17 +116,28 @@ def polygonize_raster_file(
         "polygon_count": len(gdf),
         "year": resolved_year,
         "region": resolved_region,
+        "sieve": sieve_stats,
     }
 
 
 def _polygonize_task(args: tuple) -> dict:
-    tif_path, output_path, band, mask_value, connectivity = args[:5]
+    (
+        tif_path,
+        output_path,
+        band,
+        mask_value,
+        connectivity,
+        sieve_min_pixels,
+        sieve_connectivity,
+    ) = args
     return polygonize_raster_file(
         tif_path,
         output_path,
         band=band,
         mask_value=mask_value,
         connectivity=connectivity,
+        sieve_min_pixels=sieve_min_pixels,
+        sieve_connectivity=sieve_connectivity,
     )
 
 
@@ -144,6 +166,8 @@ def polygonize_directory(
     band: int = 1,
     mask_value: float = 1,
     connectivity: int = 8,
+    sieve_min_pixels: int | None = None,
+    sieve_connectivity: int = 8,
     workers: int | None = None,
     output_suffix: str = "_mask1",
 ) -> list[dict]:
@@ -169,6 +193,8 @@ def polygonize_directory(
             band,
             mask_value,
             connectivity,
+            sieve_min_pixels,
+            sieve_connectivity,
         )
         for tif_path in tif_files
     ]

@@ -235,7 +235,7 @@ python filtering/run_classified_filters.py \
 
 | Step | Script / pipeline | Purpose |
 |------|-------------------|---------|
-| Polygonize | [`vectorize/run_vectorize_pipeline.sh`](../vectorize/README.md) | Pixels = 1 → polygons; one GPKG per raster |
+| Polygonize | [`vectorize/run_vectorize_pipeline.sh`](../vectorize/README.md) | Pixels = 1 → polygons; sieve ≥112 connected px by default |
 | Histograms | `summarize_histograms_by_region.py` | Area distribution by region (`r1`, `r2`, …) to pick a threshold |
 | Threshold | `filter_polygons_by_threshold.py` | Keep polygons ≥ N hectares |
 

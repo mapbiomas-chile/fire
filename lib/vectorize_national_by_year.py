@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import geopandas as gpd
+import rasterio
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -24,11 +25,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from lib.group_fire_events import (  # noqa: E402
     filter_fragments_by_min_area,
+    filter_fragments_by_min_pixels,
     group_polygons_by_distance,
     summarize_grouping,
 )
 from lib.raster_by_year import merge_directory_by_year  # noqa: E402
-from lib.sieve_burn_mask import sieve_raster_file  # noqa: E402
+from lib.sieve_burn_mask import pixel_area_m2_from_dataset, sieve_raster_file  # noqa: E402
 from lib.vectorize import polygonize_raster_file  # noqa: E402
 
 
@@ -84,13 +86,19 @@ def parse_args() -> argparse.Namespace:
         help="Connectivity for the pre-vectorize sieve (default: 8).",
     )
     parser.add_argument(
+        "--fragment-min-pixels",
+        type=int,
+        default=None,
+        help=(
+            "Drop polygon fragments below this pixel count before 200 m grouping. "
+            "Defaults to --sieve-min-pixels when sieve is enabled."
+        ),
+    )
+    parser.add_argument(
         "--fragment-min-ha",
         type=float,
         default=None,
-        help=(
-            "Drop polygon fragments below this area (ha) before 200 m grouping. "
-            "Prevents small survivors from being absorbed into nearby events."
-        ),
+        help="Legacy: drop fragments below this area in ha (use --fragment-min-pixels instead).",
     )
     parser.add_argument(
         "--skip-fragment-filter",
@@ -247,31 +255,56 @@ def main() -> int:
 
         fragment_filter_stats = None
         gdf_for_grouping = gdf_raw
+        fragment_min_pixels = args.fragment_min_pixels
+        if fragment_min_pixels is None and not args.skip_fragment_filter:
+            if args.sieve_min_pixels is not None:
+                fragment_min_pixels = args.sieve_min_pixels
         fragment_min_ha = args.fragment_min_ha
         if fragment_min_ha is None and sieve_enabled and args.sieve_min_ha is not None:
             fragment_min_ha = args.sieve_min_ha
-        if not args.skip_fragment_filter and fragment_min_ha is not None:
+
+        if not args.skip_fragment_filter and fragment_min_pixels is not None:
+            if sieve_stats and sieve_stats.get("pixel_area_m2"):
+                pixel_area_m2 = float(sieve_stats["pixel_area_m2"])
+            else:
+                with rasterio.open(polygonize_raster) as src:
+                    pixel_area_m2 = pixel_area_m2_from_dataset(src)
+            gdf_for_grouping, fragment_filter_stats = filter_fragments_by_min_pixels(
+                gdf_raw,
+                min_pixels=fragment_min_pixels,
+                pixel_area_m2=pixel_area_m2,
+                metric_crs=args.metric_crs,
+            )
+            print(
+                f"[INFO] Year {year}: fragment filter >= {fragment_min_pixels} px "
+                f"(pixel_area_m2={pixel_area_m2:.2f}): "
+                f"{fragment_filter_stats['fragments_before']} -> "
+                f"{fragment_filter_stats['fragments_kept']} "
+                f"(removed {fragment_filter_stats['fragments_removed']})",
+                flush=True,
+            )
+        elif not args.skip_fragment_filter and fragment_min_ha is not None:
             gdf_for_grouping, fragment_filter_stats = filter_fragments_by_min_area(
                 gdf_raw,
                 min_area_ha=fragment_min_ha,
                 metric_crs=args.metric_crs,
             )
             print(
-                f"[INFO] Year {year}: fragment filter ≥ {fragment_min_ha} ha: "
-                f"{fragment_filter_stats['fragments_before']} → "
+                f"[INFO] Year {year}: fragment filter >= {fragment_min_ha} ha: "
+                f"{fragment_filter_stats['fragments_before']} -> "
                 f"{fragment_filter_stats['fragments_kept']} "
                 f"(removed {fragment_filter_stats['fragments_removed']})",
                 flush=True,
             )
-            if (
-                fragment_filter_stats["fragments_before"] > 0
-                and fragment_filter_stats["fragments_kept"] == 0
-            ):
-                print(
-                    f"[WARN] Year {year}: fragment filter removed ALL polygons "
-                    f"(threshold {fragment_min_ha} ha).",
-                    flush=True,
-                )
+
+        if fragment_filter_stats and (
+            fragment_filter_stats["fragments_before"] > 0
+            and fragment_filter_stats["fragments_kept"] == 0
+        ):
+            print(
+                f"[WARN] Year {year}: fragment filter removed ALL polygons.",
+                flush=True,
+            )
 
         grouped = group_polygons_by_distance(
             gdf_for_grouping,
@@ -302,6 +335,7 @@ def main() -> int:
                 "raw_gpkg": str(raw_gpkg) if raw_gpkg.exists() else None,
                 "events_gpkg": str(events_gpkg),
                 "group_distance_m": args.group_distance_m,
+                "fragment_min_pixels": fragment_min_pixels,
                 "fragment_min_ha": fragment_min_ha,
                 **raw_summary,
                 **grouping_stats,
@@ -319,6 +353,7 @@ def main() -> int:
             "sieve_min_pixels": args.sieve_min_pixels,
             "sieve_min_ha": args.sieve_min_ha,
             "sieve_enabled": sieve_enabled,
+            "fragment_min_pixels": args.fragment_min_pixels,
             "fragment_min_ha": args.fragment_min_ha,
             "years": year_summaries,
         }

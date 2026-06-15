@@ -49,7 +49,11 @@ See [CLUSTER.md](CLUSTER.md) for NLHPC details.
 
 ## National vectorization (Chile by year)
 
-Merges all regional tiles into **one raster per year**, optionally **removes isolated patches** below a minimum size in **connected pixels** (default **112**), polygonizes, then groups nearby scars into **multipolygon fire events** when fragments are within **200 m** (configurable).
+Merges all regional tiles into **one raster per year**, removes isolated patches below **112 connected pixels** (sieve), polygonizes, applies the **same pixel rule** to fragments before grouping nearby scars into **multipolygon fire events** within **200 m**.
+
+```text
+merge → sieve (≥112 px) → polygonize → fragment filter (≥112 px) → group ≤200 m
+```
 
 ```bash
 source vectorize/cluster_paths.env
@@ -91,11 +95,12 @@ sbatch vectorize/run_vectorize_national_pipeline_slurm.sh
 | `VECTORIZE_NATIONAL_FROM_YEAR` / `TO_YEAR` | `2013` / `2025` | Year range |
 | `VECTORIZE_NATIONAL_MERGE_WORKERS` | `2` | Parallel yearly mosaic jobs |
 | `VECTORIZE_NATIONAL_KEEP_RAW` | `0` | Set `1` to keep ungrouped polygons |
-| `VECTORIZE_NATIONAL_SIEVE_MIN_PIXELS` | `112` | Min connected burn component (pixels); overrides ha |
+| `VECTORIZE_NATIONAL_SIEVE_MIN_PIXELS` | `112` | Min connected burn component (pixels) on raster |
 | `VECTORIZE_NATIONAL_SIEVE_MIN_HA` | — | Optional ha rule instead of pixels |
-| `VECTORIZE_NATIONAL_SKIP_SIEVE` | `0` | Set `1` to disable pre-vectorize sieve |
-| `VECTORIZE_NATIONAL_FRAGMENT_MIN_HA` | — | Optional min polygon area (ha) before 200 m grouping |
-| `VECTORIZE_NATIONAL_SKIP_FRAGMENT_FILTER` | `1` | Set `0` + `FRAGMENT_MIN_HA` to enable ha filter |
+| `VECTORIZE_NATIONAL_SKIP_SIEVE` | `0` | Set `1` to disable raster sieve |
+| `VECTORIZE_NATIONAL_FRAGMENT_MIN_PIXELS` | `112` | Min fragment size (px) before 200 m grouping |
+| `VECTORIZE_NATIONAL_FRAGMENT_MIN_HA` | — | Legacy ha rule for fragment filter |
+| `VECTORIZE_NATIONAL_SKIP_FRAGMENT_FILTER` | `0` | Set `1` to allow small fragments into grouping |
 
 Implementation: [`lib/vectorize_national_by_year.py`](../lib/vectorize_national_by_year.py).
 
@@ -110,6 +115,8 @@ Implementation: [`lib/vectorize_national_by_year.py`](../lib/vectorize_national_
 | `VECTORIZE_INPUT_DIR` | No | `$WORK_ROOT/classified_filtered` | Post-filter rasters |
 | `VECTORIZE_OUTPUT_DIR` | No | `$WORK_ROOT/polygons` | Output GeoPackages |
 | `VECTORIZE_WORKERS` | No | `4` | Parallel workers |
+| `VECTORIZE_SIEVE_MIN_PIXELS` | No | `112` | Min connected burn component before polygonize |
+| `VECTORIZE_SKIP_SIEVE` | No | `0` | Set `1` to polygonize without sieve |
 | `VECTORIZE_MERGED_GPKG` | No | — | Optional single merged layer |
 | `VECTORIZE_STATS_JSON` | No | `$WORK_ROOT/logs/vectorize_stats.json` | Run summary |
 

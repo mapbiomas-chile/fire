@@ -140,6 +140,36 @@ def group_polygons_by_distance(
     return out
 
 
+def filter_fragments_by_min_pixels(
+    gdf: gpd.GeoDataFrame,
+    *,
+    min_pixels: int,
+    pixel_area_m2: float,
+    metric_crs: str = "EPSG:32719",
+) -> tuple[gpd.GeoDataFrame, dict]:
+    """Drop polygon fragments below ``min_pixels`` (estimated from geometry area)."""
+    if gdf.empty or min_pixels < 1 or pixel_area_m2 <= 0:
+        return gdf, {
+            "fragment_min_pixels": int(min_pixels),
+            "pixel_area_m2": float(pixel_area_m2),
+            "fragments_before": len(gdf),
+            "fragments_removed": 0,
+            "fragments_kept": len(gdf),
+        }
+
+    projected = gdf.to_crs(metric_crs)
+    est_pixels = (projected.geometry.area / pixel_area_m2).round().astype(int)
+    keep = est_pixels >= min_pixels
+    removed = int((~keep).sum())
+    return gdf.loc[keep].copy(), {
+        "fragment_min_pixels": int(min_pixels),
+        "pixel_area_m2": float(pixel_area_m2),
+        "fragments_before": len(gdf),
+        "fragments_removed": removed,
+        "fragments_kept": int(keep.sum()),
+    }
+
+
 def filter_fragments_by_min_area(
     gdf: gpd.GeoDataFrame,
     *,
