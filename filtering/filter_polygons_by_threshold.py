@@ -41,7 +41,16 @@ def parse_args() -> argparse.Namespace:
         description="Filter polygons by minimum area threshold and write one output GPKG."
     )
     parser.add_argument("--input-dir", required=True)
-    parser.add_argument("--output-gpkg", required=True)
+    parser.add_argument(
+        "--output-gpkg",
+        default=None,
+        help="Optional merged output GPKG (all tiles combined).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Write one filtered GPKG per input tile (same filenames). For histograms.",
+    )
     parser.add_argument(
         "--stats-summary-json",
         default=None,
@@ -152,10 +161,16 @@ def main() -> int:
         raise ValueError("Use only one of --per-region or --per-region-year.")
 
     input_dir = Path(args.input_dir)
-    output_gpkg = Path(args.output_gpkg)
+    output_gpkg = Path(args.output_gpkg) if args.output_gpkg else None
+    output_dir = Path(args.output_dir) if args.output_dir else None
+
+    if output_gpkg is None and output_dir is None:
+        raise ValueError("Provide --output-gpkg and/or --output-dir.")
 
     if not input_dir.is_dir():
         raise FileNotFoundError(f"Input directory not found: {input_dir}")
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     gpkg_files = sorted(input_dir.glob(args.pattern))
     if not gpkg_files:
@@ -246,6 +261,9 @@ def main() -> int:
         kept["area_m2"] = area_m2.loc[keep].values
         kept["area_ha"] = area_ha.loc[keep].values
         kept["threshold_ha_used"] = float(threshold_ha)
+        if output_dir is not None:
+            tile_out = output_dir / gpkg_path.name
+            kept.to_file(tile_out, driver="GPKG")
         filtered_frames.append(kept)
         total_after += len(kept)
         print(
@@ -253,28 +271,32 @@ def main() -> int:
             f"(thr={threshold_ha} ha, r{region}, year={year})"
         )
 
-    if filtered_frames:
-        out_gdf = gpd.GeoDataFrame(
-            pd.concat(filtered_frames, ignore_index=True), crs=filtered_frames[0].crs
-        )
-    else:
-        out_gdf = gpd.GeoDataFrame(
-            {
-                "source_file": [],
-                "region": [],
-                "year": [],
-                "area_m2": [],
-                "area_ha": [],
-                "threshold_ha_used": [],
-            },
-            geometry=[],
-            crs="EPSG:4326",
-        )
+    if output_gpkg is not None:
+        if filtered_frames:
+            out_gdf = gpd.GeoDataFrame(
+                pd.concat(filtered_frames, ignore_index=True), crs=filtered_frames[0].crs
+            )
+        else:
+            out_gdf = gpd.GeoDataFrame(
+                {
+                    "source_file": [],
+                    "region": [],
+                    "year": [],
+                    "area_m2": [],
+                    "area_ha": [],
+                    "threshold_ha_used": [],
+                },
+                geometry=[],
+                crs="EPSG:4326",
+            )
 
-    output_gpkg.parent.mkdir(parents=True, exist_ok=True)
-    out_gdf.to_file(output_gpkg, driver="GPKG")
+        output_gpkg.parent.mkdir(parents=True, exist_ok=True)
+        out_gdf.to_file(output_gpkg, driver="GPKG")
+        print(f"[INFO] Wrote filtered GPKG: {output_gpkg}")
 
-    print(f"[INFO] Wrote filtered GPKG: {output_gpkg}")
+    if output_dir is not None:
+        n_tiles = len(list(output_dir.glob(args.pattern)))
+        print(f"[INFO] Wrote {n_tiles} per-tile GPKG(s) under: {output_dir}")
     print(f"[INFO] Total polygons kept: {total_after} / {total_before}")
     return 0
 
