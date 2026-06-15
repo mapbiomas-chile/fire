@@ -229,27 +229,65 @@ python filtering/run_classified_filters.py \
 
 ---
 
-## 5. Vectorize, histograms, and threshold (optional)
+## 5. Vectorize, histograms, and area threshold (optional)
 
-**After** `classified_filtered/` is ready. Vectorization has its own auxiliary pipeline in [`../vectorize/`](../vectorize/README.md).
+**After** `classified_filtered/` is ready. This is **separate** from the national 112-pixel sieve (special case in `vectorize/`).
 
-| Step | Script / pipeline | Purpose |
-|------|-------------------|---------|
-| Polygonize | [`vectorize/run_vectorize_pipeline.sh`](../vectorize/README.md) | Pixels = 1 → polygons; sieve ≥112 connected px by default |
-| Histograms | `summarize_histograms_by_region.py` | Area distribution by region (`r1`, `r2`, …) to pick a threshold |
-| Threshold | `filter_polygons_by_threshold.py` | Keep polygons ≥ N hectares |
+| Step | Script | Purpose |
+|------|--------|---------|
+| Polygonize | [`vectorize/run_vectorize_pipeline.sh`](../vectorize/README.md) | One GPKG per tile (no area sieve by default) |
+| Histograms | `summarize_histograms_by_region.py` | **Visual** area distributions (PNG per region/year) |
+| Recommend threshold | `recommend_polygon_area_thresholds.py` | **Numeric** thresholds from the same polygons (JSON + CSV) |
+| Filter | `filter_polygons_by_threshold.py` | Keep polygons ≥ threshold (ha) |
+
+### How to choose a minimum area
+
+1. **Polygonize** per-tile outputs (`WORK_ROOT/polygons/*.gpkg`).
+2. **Plot** histograms to see the shape of the distribution (many tiny polygons vs few large ones).
+3. **Compute** recommended cutoffs (P5, P10, elbow, …) with `recommend_polygon_area_thresholds.py`.
+4. **Review** `thresholds_by_region.csv` — r2 often needs a different cutoff than r1/r4/r6.
+5. **Apply** with `filter_polygons_by_threshold.py` (`--per-region` recommended).
+
+| Rule | Meaning | Typical use |
+|------|---------|-------------|
+| `p5` | 5th percentile of polygon areas | Aggressive: drops the smallest 5% by count |
+| `p10` | 10th percentile | **Default starting point** |
+| `p25` | 25th percentile | More conservative (keeps more small polygons) |
+| `bottom5_mean` | Mean area of the smallest 5% | Smooth variant of the lower tail |
+| `elbow` | Knee on the cumulative distribution | When the histogram has a clear break |
+
+**Important:** this filter runs on **vectors** (hectares), after polygonize. It does not replace raster filters (temporal, LULC, hole fill).
 
 ```bash
-cp vectorize/cluster_paths.env.example vectorize/cluster_paths.env
-# edit PYTHON, WORK_ROOT, then:
+# 1) Polygonize (disable national 112-px sieve if you only want histogram-based filtering)
+export VECTORIZE_SKIP_SIEVE=1
 bash vectorize/run_vectorize_pipeline.sh
 
+# 2) Histograms (PNG for inspection)
 python filtering/summarize_histograms_by_region.py \
-  --input-dir /path/to/polygons --output-dir /path/to/histograms
+  --input-dir "${WORK_ROOT}/polygons" \
+  --output-dir "${WORK_ROOT}/histogramas_area"
 
+# 3) Recommended thresholds (JSON + CSV)
+python filtering/recommend_polygon_area_thresholds.py \
+  --input-dir "${WORK_ROOT}/polygons" \
+  --output-dir "${WORK_ROOT}/thresholds_area"
+
+# 4) Filter (per-region P10 example)
 python filtering/filter_polygons_by_threshold.py \
-  --input-dir /path/to/polygons \
-  --output-gpkg /path/to/polygons_filtered.gpkg \
+  --input-dir "${WORK_ROOT}/polygons" \
+  --output-gpkg "${WORK_ROOT}/polygons_filtered.gpkg" \
+  --stats-summary-json "${WORK_ROOT}/thresholds_area/threshold_summary.json" \
+  --threshold-rule p10 \
+  --per-region
+```
+
+Or set one manual cutoff for all tiles:
+
+```bash
+python filtering/filter_polygons_by_threshold.py \
+  --input-dir "${WORK_ROOT}/polygons" \
+  --output-gpkg "${WORK_ROOT}/polygons_filtered.gpkg" \
   --threshold-ha 10
 ```
 
@@ -383,8 +421,9 @@ Typical environment: Conda `mb_fuego` (or another env; set path in `PYTHON`).
 | `refine_burn_mask_closing.py` | § 3b |
 | `run_classified_filters.py` | § 2 + § 3 |
 | `polygonize_mask_parallel.py` | § 4 |
-| `summarize_histograms_by_region.py` | § 4 |
-| `filter_polygons_by_threshold.py` | § 4 |
+| `summarize_histograms_by_region.py` | § 5 |
+| `recommend_polygon_area_thresholds.py` | § 5 |
+| `filter_polygons_by_threshold.py` | § 5 |
 | `run_filtering_pipeline.sh` | Pipeline |
 | `run_filtering_pipeline_slurm.sh` | Pipeline (SLURM) |
 | `run_refine_closing_pipeline.sh` | Closing pilot pipeline |
