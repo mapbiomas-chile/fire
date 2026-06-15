@@ -29,7 +29,7 @@ Multi-band LULC stack
         ▼
 ┌───────────────────────────────────────┐
 │ 3. Internal hole fill                 │  refine_burn_mask_closing.py
-│    (fill_holes, all enclosed gaps)    │
+│    (fill_holes; max-hole-area config) │
 └───────────────────────────────────────┘
         │
         ▼
@@ -139,7 +139,7 @@ python filtering/filter_temporal_first_burn_year.py \
 
 ## 3. Internal hole fill
 
-**Purpose:** fill **all enclosed** 0-pixels inside burn scars without moving the outer boundary. Runs **after** temporal dedup and **before** LULC so non-burnable classes are removed last.
+**Purpose:** fill enclosed 0-pixels inside burn scars without moving the outer boundary. Runs **after** temporal dedup and **before** LULC so non-burnable classes are removed last.
 
 **Script:** `refine_burn_mask_closing.py` (pipeline uses `--method fill_holes` only).
 
@@ -149,7 +149,14 @@ python filtering/filter_temporal_first_burn_year.py \
 | `closing` | Morphological closing; also smooths / expands the **border** |
 | `both` | `fill_holes` then `closing` |
 
-Pipeline default: **`--max-hole-area 0`** (all enclosed holes). For a gentler standalone run, use e.g. `9` or `16`.
+**`--max-hole-area`** limits which enclosed holes are filled (in pixels²):
+
+| Context | Default | Meaning |
+|---------|---------|---------|
+| **Main pipeline** (`run_filtering_pipeline.sh`) | `0` | Fill **all** enclosed holes (`MAX_HOLE_AREA=0`) |
+| **Standalone refine pilot** (`run_refine_closing_pipeline.sh`) | `16` | Fill only small holes ≤ 16 px; gentler re-run on existing folders |
+
+Override via `MAX_HOLE_AREA` in `filtering/cluster_paths.env` or `cluster_paths.refine_closing.env`.
 
 ```bash
 python filtering/refine_burn_mask_closing.py \

@@ -12,7 +12,8 @@ Reusable Python helpers for MapBiomas Fire Chile. **Pipelines** live in their ow
 | `vectorize_filtered_classified.py` | Per-tile vectorization CLI |
 | `vectorize_national_by_year.py` | Merge tiles by year → polygonize Chile → group events |
 | `raster_by_year.py` | Merge regional rasters into one GeoTIFF per calendar year |
-| `group_fire_events.py` | Group nearby polygons into multipolygon fire events |
+| `sieve_burn_mask.py` | Remove small connected burn components from binary masks (pre-vectorize sieve) |
+| `group_fire_events.py` | Group nearby polygons into multipolygon fire events; optional min-area fragment filter |
 
 ## Vectorization pipeline
 
@@ -28,11 +29,11 @@ On NLHPC: `sbatch vectorize/run_vectorize_pipeline_slurm.sh`
 
 Full docs: [vectorize/README.md](../vectorize/README.md).
 
-**National (Chile-wide by year):** [vectorize/run_vectorize_national_pipeline.sh](../vectorize/run_vectorize_national_pipeline.sh) — merge tiles → polygonize → group scars within 200 m (configurable).
+**National (Chile-wide by year):** [vectorize/run_vectorize_national_pipeline.sh](../vectorize/run_vectorize_national_pipeline.sh) — merge tiles → sieve (default 112 connected pixels) → polygonize → group scars within 200 m (configurable).
 
 ## Dependencies
 
-`numpy`, `rasterio`, `geopandas`, `shapely`
+`numpy`, `rasterio`, `geopandas`, `shapely`, `scipy` (sieve / morphological helpers)
 
 ## Use from Python
 

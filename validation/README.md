@@ -14,6 +14,24 @@ Scripts to validate and prepare reference layers used to evaluate the burned-are
 | `intersect_top_n_scars_with_classified.py` | Crosses a scar catalog with **polygonized** classified GeoPackages (produced with **`../filtering/polygonize_mask_parallel.py`**). Optional top N / `--by-year`; output: `scar` + `classified_hits` layers. |
 | `calculate_jaccard_index.py` | From a hits GeoPackage (`--hits-gpkg`), one row per scar: **B = unary_union(bᵢ)**, **J = area(A∩B)/area(A∪B)**. Legacy mode: single intersection layer + reference/classified totals. |
 | `spatial_validation_metrics.py` | Singh et al. (2015) closeness **D** per reference–segment pair; scar-level **TP/FP/FN**, commission/omission, Jaccard, Dice. See `requirements-spatial-validation.txt`. |
+| `extract_top_fire_events.py` | Build a top-N fire-events layer from yearly national `chile_YYYY_events.gpkg` files (area range, optional year exclusions). |
+
+## Extract top fire events
+
+### `extract_top_fire_events.py`
+
+Select the largest events from national vector outputs (`vectorize/` → `polygons_chile/chile_YYYY_events.gpkg`).
+
+```bash
+python validation/extract_top_fire_events.py \
+  --input-dir /path/to/polygons_chile \
+  --output-gpkg /path/to/top50_incendios.gpkg \
+  --from-year 2014 --to-year 2025 \
+  --min-ha 200 --max-ha 5000 --top-n 50 \
+  --exclude-years 2019
+```
+
+Output columns: `id`, `event_id`, `anio`, `area_m2`, `area_ha`, `fragment_count`, `max_gap_m`, `geometry`.
 
 ## Spatial validation (Singh et al. 2015)
 
