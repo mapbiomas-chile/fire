@@ -3,10 +3,12 @@
 Recommend minimum polygon area thresholds (ha) from per-tile vector outputs.
 
 Reads GeoPackages (typically one per classified tile), groups polygons by region
-parsed from the filename (r1, r2, r4, r6), and writes:
+and calendar year parsed from the filename (r1, r2, r4, r6 + 20xx), and writes:
 
-- ``threshold_summary.json`` — stats + recommended thresholds (global and per region)
-- ``thresholds_by_region.csv`` — table for manual review
+- ``threshold_summary.json`` — stats + recommended thresholds (global, per region,
+  and per region×year)
+- ``thresholds_by_region.csv`` — region-level table (full series pooled)
+- ``thresholds_by_region_year.csv`` — region×year table for manual review
 
 Use the JSON with ``filter_polygons_by_threshold.py --stats-summary-json``.
 """
@@ -26,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from lib.tile_metadata import parse_region  # noqa: E402
+from lib.tile_metadata import parse_calendar_year, parse_region  # noqa: E402
 
 ALLOWED_REGIONS = ("1", "2", "4", "6")
 
@@ -146,24 +148,29 @@ def main() -> int:
         raise RuntimeError(f"No files found in {input_dir} with pattern {args.pattern!r}")
 
     by_region: dict[str, list[float]] = {r: [] for r in ALLOWED_REGIONS}
+    by_region_year: dict[str, dict[str, list[float]]] = {r: {} for r in ALLOWED_REGIONS}
     skipped = 0
     for path in files:
         region = parse_region(path)
-        if region not in ALLOWED_REGIONS:
+        year = parse_calendar_year(path)
+        if region not in ALLOWED_REGIONS or year is None:
             skipped += 1
             continue
         areas = load_areas_ha(path, args.target_crs)
         if len(areas):
             by_region[region].extend(areas.tolist())
+            year_key = str(year)
+            by_region_year[region].setdefault(year_key, []).extend(areas.tolist())
 
     all_areas = [a for region in ALLOWED_REGIONS for a in by_region[region]]
     payload: dict = {
         "input_dir": str(input_dir),
         "target_crs": args.target_crs,
         "files_total": len(files),
-        "files_skipped_no_region": skipped,
+        "files_skipped_no_region_or_year": skipped,
         "global": recommend_for_areas(np.array(all_areas, dtype=float), min_polygons=args.min_polygons),
         "by_region": {},
+        "by_region_year": {},
     }
 
     rows: list[dict] = []
@@ -191,20 +198,51 @@ def main() -> int:
             flush=True,
         )
 
+    rows_ry: list[dict] = []
+    for region in ALLOWED_REGIONS:
+        payload["by_region_year"][region] = {}
+        for year_key in sorted(by_region_year[region], key=int):
+            areas = np.array(by_region_year[region][year_key], dtype=float)
+            year_stats = recommend_for_areas(areas, min_polygons=args.min_polygons)
+            payload["by_region_year"][region][year_key] = year_stats
+            recs = year_stats.get("threshold_recommendations", {})
+            rows_ry.append(
+                {
+                    "region": region,
+                    "year": int(year_key),
+                    "polygon_count": year_stats["polygon_count"],
+                    "p5_ha": recs.get(RULE_KEYS["p5"]),
+                    "p10_ha": recs.get(RULE_KEYS["p10"]),
+                    "p25_ha": recs.get(RULE_KEYS["p25"]),
+                    "elbow_ha": recs.get(RULE_KEYS["elbow"]),
+                    "bottom5_mean_ha": recs.get(RULE_KEYS["bottom5_mean"]),
+                    "median_ha": year_stats.get("area_ha_median"),
+                }
+            )
+            print(
+                f"[INFO] region r{region} year {year_key}: n={year_stats['polygon_count']} "
+                f"p25={recs.get(RULE_KEYS['p25'], 'n/a')} ha "
+                f"elbow={recs.get(RULE_KEYS['elbow'], 'n/a')} ha",
+                flush=True,
+            )
+
     summary_path = output_dir / "threshold_summary.json"
     csv_path = output_dir / "thresholds_by_region.csv"
+    csv_ry_path = output_dir / "thresholds_by_region_year.csv"
     summary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     pd.DataFrame(rows).to_csv(csv_path, index=False)
+    pd.DataFrame(rows_ry).to_csv(csv_ry_path, index=False)
 
     print(f"[INFO] Wrote {summary_path}", flush=True)
     print(f"[INFO] Wrote {csv_path}", flush=True)
+    print(f"[INFO] Wrote {csv_ry_path}", flush=True)
     print(
         "[INFO] Suggested next step:\n"
         "  python filtering/filter_polygons_by_threshold.py \\\n"
         f"    --input-dir {input_dir} \\\n"
         f"    --output-gpkg {output_dir / 'polygons_filtered.gpkg'} \\\n"
         f"    --stats-summary-json {summary_path} \\\n"
-        "    --threshold-rule p10 --per-region",
+        "    --threshold-rule p25 --per-region-year",
         flush=True,
     )
     return 0

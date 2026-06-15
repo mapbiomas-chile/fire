@@ -37,12 +37,16 @@ Multi-band LULC stack
 │ 4. LULC filter on classified tiles  │  filter_classified_parallel.py
 └───────────────────────────────────────┘
         │
-        ▼  classified_filtered/
-   (optional, for validation)
+        ▼
 ┌───────────────────────────────────────┐
-│ 5. Polygonize → histograms → threshold│  polygonize_mask_parallel.py
-│                                       │  summarize_histograms_by_region.py
-│                                       │  filter_polygons_by_threshold.py
+│ 4b. Min-patch sieve (optional)        │  sieve_min_patch_parallel.py
+│     remove small connected patches    │
+└───────────────────────────────────────┘
+        │
+        ▼  classified_filtered/
+   (optional, post-vector QA)
+┌───────────────────────────────────────┐
+│ 5. Polygonize → histograms → threshold│  polygonize / recommend thresholds
 └───────────────────────────────────────┘
 ```
 
@@ -187,11 +191,46 @@ python filtering/filter_classified_parallel.py \
 
 ---
 
-## Steps 2 + 3 + 4 in one command
+## 4b. Min-patch sieve (after LULC)
+
+**Purpose:** remove **small connected burn patches** left after LULC (edge fragments, salt-and-pepper noise). Runs on **raster**, before polygonize.
+
+**Why after LULC:** LULC is the step that most fragments scars along class boundaries; filtering earlier would not catch those artifacts.
+
+**Script:** `sieve_min_patch_parallel.py` (also wired into `run_classified_filters.py` and `run_filtering_pipeline.sh`).
+
+Set **either** `--min-pixels` or `--min-area-ha` (ha is converted from each tile's geotransform):
+
+```bash
+python filtering/sieve_min_patch_parallel.py \
+  --input-dir /path/to/classified_lulc \
+  --output-dir /path/to/classified_filtered \
+  --min-area-ha 1 \
+  --workers 4
+```
+
+**Calibrating the threshold:** polygonize LULC output without sieve → histograms → `recommend_polygon_area_thresholds.py` → set `MIN_PATCH_SIEVE_HA` or convert ha to pixels (~11 px ≈ 1 ha at 30 m).
+
+| Env variable | Role |
+|--------------|------|
+| `MIN_PATCH_SIEVE_HA` | Min connected patch area (ha) |
+| `MIN_PATCH_SIEVE_PIXELS` | Overrides ha rule |
+| `SKIP_MIN_PATCH_SIEVE` | Set `1` to disable |
+| `MIN_PATCH_CONNECTIVITY` | `8` (default) or `4` |
+
+Partial rerun after LULC only:
+
+```bash
+STEPS=min_patch_sieve MIN_PATCH_SIEVE_HA=1 bash filtering/run_filtering_pipeline.sh
+```
+
+---
+
+## Steps 2 + 3 + 4 (+ 4b) in one command
 
 **Script:** `run_classified_filters.py`
 
-Chains `filter_temporal_first_burn_year.py` → `refine_burn_mask_closing.py` → `filter_classified_parallel.py`. This is what the bash pipeline step `filter` runs.
+Chains `filter_temporal_first_burn_year.py` → `refine_burn_mask_closing.py` → `filter_classified_parallel.py` → optional `sieve_min_patch_parallel.py`. This is what the bash pipeline step `filter` runs.
 
 ```bash
 python filtering/run_classified_filters.py \
@@ -209,6 +248,8 @@ python filtering/run_classified_filters.py \
 | `--temporal-only` | Temporal filter only (step 2) |
 | `--fill-only` | Hole fill only (step 3); input = temporal output |
 | `--lulc-only` | LULC filter only (step 4) |
+| `--min-patch-only` | Min-patch sieve only (step 4b; input = LULC output) |
+| `--skip-min-patch` | Temporal → fill → LULC without min-patch sieve |
 | `--skip-fill` | Temporal → LULC without hole fill |
 | `--no-spatial-merge` | Same-pixel dedup only (default) |
 | `--name-contains 141228` | Limit temporal/fill steps to matching filenames |
@@ -245,8 +286,8 @@ python filtering/run_classified_filters.py \
 1. **Polygonize** per-tile outputs (`WORK_ROOT/polygons/*.gpkg`).
 2. **Plot** histograms to see the shape of the distribution (many tiny polygons vs few large ones).
 3. **Compute** recommended cutoffs (P5, P10, elbow, …) with `recommend_polygon_area_thresholds.py`.
-4. **Review** `thresholds_by_region.csv` — r2 often needs a different cutoff than r1/r4/r6.
-5. **Apply** with `filter_polygons_by_threshold.py` (`--per-region` recommended).
+4. **Review** `thresholds_by_region_year.csv` (one row per region×year) or `thresholds_by_region.csv` (series pooled).
+5. **Apply** with `filter_polygons_by_threshold.py` (`--per-region-year` recommended when error varies by year).
 
 | Rule | Meaning | Typical use |
 |------|---------|-------------|
@@ -268,18 +309,18 @@ python filtering/summarize_histograms_by_region.py \
   --input-dir "${WORK_ROOT}/polygons" \
   --output-dir "${WORK_ROOT}/histogramas_area"
 
-# 3) Recommended thresholds (JSON + CSV)
+# 3) Recommended thresholds (JSON + CSV per region and region×year)
 python filtering/recommend_polygon_area_thresholds.py \
   --input-dir "${WORK_ROOT}/polygons" \
   --output-dir "${WORK_ROOT}/thresholds_area"
 
-# 4) Filter (per-region P10 example)
+# 4) Filter (per-region×year P25 example; fallback: region → global)
 python filtering/filter_polygons_by_threshold.py \
   --input-dir "${WORK_ROOT}/polygons" \
   --output-gpkg "${WORK_ROOT}/polygons_filtered.gpkg" \
   --stats-summary-json "${WORK_ROOT}/thresholds_area/threshold_summary.json" \
-  --threshold-rule p10 \
-  --per-region
+  --threshold-rule p25 \
+  --per-region-year
 ```
 
 Or set one manual cutoff for all tiles:
@@ -333,9 +374,10 @@ Other settings (`FROM_YEAR`, `WORKERS`, `MAX_HOLE_AREA`, `FILTER_OUTPUT_DIR`, et
 | `masks_accumulated` | § 1a | `create_accumulated_class_masks.py` |
 | `masks_yearly` | § 1b | `create_yearly_masks.py` |
 | `masks_total` | § 1c | `create_total_masks_by_year.py` |
-| **`filter`** | **§ 2 + § 3 + § 4** | **`run_classified_filters.py`** |
+| `filter` | **§ 2 + § 3 + § 4 (+ § 4b if configured)** | **`run_classified_filters.py`** |
+| `min_patch_sieve` | § 4b only (input = LULC output) | `run_classified_filters.py --min-patch-only` |
 
-Partial reruns: `temporal_first_burn` (§ 2), `fill_holes` (§ 3), `lulc_filter` (§ 4).
+Partial reruns: `temporal_first_burn` (§ 2), `fill_holes` (§ 3), `lulc_filter` (§ 4), `min_patch_sieve` (§ 4b).
 
 ```bash
 cd /path/to/fire
@@ -355,6 +397,11 @@ bash filtering/run_filtering_pipeline.sh
 | `FILTER_OUTPUT_DIR` | Final output (default: `$WORK_ROOT/classified_filtered`) |
 | `MAX_HOLE_AREA` | Hole fill limit in px; `0` = all enclosed holes (default) |
 | `SKIP_FILL_HOLES` | `1` = temporal → LULC without fill |
+| `MIN_PATCH_SIEVE_HA` | Min connected patch (ha) for § 4b; unset = skip sieve |
+| `MIN_PATCH_SIEVE_PIXELS` | Overrides ha rule for § 4b |
+| `SKIP_MIN_PATCH_SIEVE` | `1` = disable § 4b even if ha/px set |
+| `MIN_PATCH_CONNECTIVITY` | `8` (default) or `4` |
+| `LULC_INTERMEDIATE_DIR` | LULC output when rerunning only § 4b |
 | `KEEP_TEMPORAL_INTERMEDIATE` | `1` = keep § 2 intermediate output |
 | `KEEP_FILL_INTERMEDIATE` | `1` = keep § 3 intermediate output |
 | `FROM_YEAR` / `TO_YEAR` | Year range (default 2013–2025) |
@@ -416,10 +463,11 @@ Typical environment: Conda `mb_fuego` (or another env; set path in `PYTHON`).
 | `create_accumulated_class_masks.py` | § 1a |
 | `create_yearly_masks.py` | § 1b |
 | `create_total_masks_by_year.py` | § 1c |
-| `filter_classified_parallel.py` | § 2 |
-| `filter_temporal_first_burn_year.py` | § 3 |
-| `refine_burn_mask_closing.py` | § 3b |
-| `run_classified_filters.py` | § 2 + § 3 |
+| `filter_temporal_first_burn_year.py` | § 2 |
+| `refine_burn_mask_closing.py` | § 3 |
+| `filter_classified_parallel.py` | § 4 |
+| `sieve_min_patch_parallel.py` | § 4b |
+| `run_classified_filters.py` | § 2 + § 3 + § 4 (+ § 4b) |
 | `polygonize_mask_parallel.py` | § 4 |
 | `summarize_histograms_by_region.py` | § 5 |
 | `recommend_polygon_area_thresholds.py` | § 5 |

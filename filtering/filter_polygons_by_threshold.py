@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from lib.tile_metadata import parse_region  # noqa: E402
+from lib.tile_metadata import parse_calendar_year, parse_region  # noqa: E402
 
 ALLOWED_REGIONS = {"1", "2", "4", "6"}
 
@@ -62,64 +62,95 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--per-region",
         action="store_true",
-        help="Use by_region thresholds from summary JSON (requires region in filename).",
+        help="Use by_region thresholds (series pooled per region).",
+    )
+    parser.add_argument(
+        "--per-region-year",
+        action="store_true",
+        help=(
+            "Use by_region_year thresholds per tile/year "
+            "(fallback: region, then global)."
+        ),
     )
     parser.add_argument("--target-crs", default="EPSG:32719")
     parser.add_argument("--pattern", default="*.gpkg")
     return parser.parse_args()
 
 
-def _lookup_threshold(summary: dict, rule: str, *, region: str | None) -> float:
-    rule_key = RULE_KEY_MAP[rule]
-    if region is not None and "by_region" in summary:
-        block = summary["by_region"].get(region, {})
-        recs = block.get("threshold_recommendations", {})
-        if rule_key in recs:
-            return float(recs[rule_key])
-    block = summary.get("global", summary)
+def _threshold_from_block(block: dict, rule_key: str) -> float | None:
     recs = block.get("threshold_recommendations", {})
-    threshold = recs.get(rule_key)
+    value = recs.get(rule_key)
+    if value is None:
+        return None
+    return float(value)
+
+
+def lookup_threshold(
+    summary: dict,
+    rule: str,
+    *,
+    region: str | None,
+    year: int | None,
+    per_region_year: bool,
+    per_region: bool,
+) -> float:
+    rule_key = RULE_KEY_MAP[rule]
+
+    if per_region_year and region is not None and year is not None:
+        year_block = summary.get("by_region_year", {}).get(region, {}).get(str(year), {})
+        threshold = _threshold_from_block(year_block, rule_key)
+        if threshold is not None:
+            return threshold
+
+    if (per_region_year or per_region) and region is not None:
+        region_block = summary.get("by_region", {}).get(region, {})
+        threshold = _threshold_from_block(region_block, rule_key)
+        if threshold is not None:
+            return threshold
+
+    global_block = summary.get("global", summary)
+    threshold = _threshold_from_block(global_block, rule_key)
     if threshold is None:
         raise ValueError(
             f"Threshold for rule '{rule}' ({rule_key}) not found in summary JSON."
         )
-    return float(threshold)
+    return threshold
 
 
-def resolve_threshold_map(args: argparse.Namespace) -> dict[str | None, float]:
-    if args.threshold_ha is not None:
-        if args.threshold_ha < 0:
-            raise ValueError("--threshold-ha must be >= 0")
-        return {None: float(args.threshold_ha)}
-
-    if not args.stats_summary_json:
-        raise ValueError("Provide --threshold-ha or --stats-summary-json.")
-
-    summary_path = Path(args.stats_summary_json)
-    if not summary_path.exists():
-        raise FileNotFoundError(f"Summary JSON not found: {summary_path}")
-
-    with summary_path.open("r", encoding="utf-8") as f:
-        summary = json.load(f)
+def resolve_threshold_map(args: argparse.Namespace, summary: dict) -> dict[str | None, float]:
+    if args.per_region_year:
+        return {}
 
     if args.per_region:
         thresholds: dict[str | None, float] = {}
         for region in ALLOWED_REGIONS:
-            try:
-                thresholds[region] = _lookup_threshold(
-                    summary, args.threshold_rule, region=region
-                )
-            except ValueError:
-                thresholds[region] = _lookup_threshold(
-                    summary, args.threshold_rule, region=None
-                )
+            thresholds[region] = lookup_threshold(
+                summary,
+                args.threshold_rule,
+                region=region,
+                year=None,
+                per_region_year=False,
+                per_region=True,
+            )
         return thresholds
 
-    return {None: _lookup_threshold(summary, args.threshold_rule, region=None)}
+    return {
+        None: lookup_threshold(
+            summary,
+            args.threshold_rule,
+            region=None,
+            year=None,
+            per_region_year=False,
+            per_region=False,
+        )
+    }
 
 
 def main() -> int:
     args = parse_args()
+    if args.per_region and args.per_region_year:
+        raise ValueError("Use only one of --per-region or --per-region-year.")
+
     input_dir = Path(args.input_dir)
     output_gpkg = Path(args.output_gpkg)
 
@@ -130,13 +161,37 @@ def main() -> int:
     if not gpkg_files:
         raise RuntimeError(f"No files found in {input_dir} with pattern {args.pattern}")
 
-    threshold_map = resolve_threshold_map(args)
+    summary: dict | None = None
+    threshold_map: dict[str | None, float] = {}
+
+    if args.threshold_ha is not None:
+        if args.threshold_ha < 0:
+            raise ValueError("--threshold-ha must be >= 0")
+        threshold_map = {None: float(args.threshold_ha)}
+    else:
+        if not args.stats_summary_json:
+            raise ValueError("Provide --threshold-ha or --stats-summary-json.")
+
+        summary_path = Path(args.stats_summary_json)
+        if not summary_path.exists():
+            raise FileNotFoundError(f"Summary JSON not found: {summary_path}")
+
+        with summary_path.open("r", encoding="utf-8") as f:
+            summary = json.load(f)
+
+        threshold_map = resolve_threshold_map(args, summary)
+
     if None in threshold_map:
         print(f"[INFO] Using global minimum area threshold: {threshold_map[None]} ha")
-    else:
+    elif args.per_region:
         print(f"[INFO] Using per-region thresholds ({args.threshold_rule}):")
         for region in sorted(threshold_map):
             print(f"       r{region}: {threshold_map[region]} ha")
+    elif args.per_region_year:
+        print(
+            f"[INFO] Using per-region×year thresholds ({args.threshold_rule}); "
+            "fallback: region → global"
+        )
 
     filtered_frames: list[gpd.GeoDataFrame] = []
     total_before = 0
@@ -149,9 +204,25 @@ def main() -> int:
             continue
 
         region = parse_region(gpkg_path)
-        threshold_ha = threshold_map.get(region) if args.per_region else threshold_map[None]
-        if threshold_ha is None:
-            threshold_ha = threshold_map.get(None)
+        year = parse_calendar_year(gpkg_path)
+
+        if args.threshold_ha is not None:
+            threshold_ha = threshold_map[None]
+        elif args.per_region_year:
+            if summary is None:
+                raise RuntimeError("Summary JSON required for --per-region-year.")
+            threshold_ha = lookup_threshold(
+                summary,
+                args.threshold_rule,
+                region=region,
+                year=year,
+                per_region_year=True,
+                per_region=False,
+            )
+        else:
+            threshold_ha = threshold_map.get(region) if args.per_region else threshold_map[None]
+            if threshold_ha is None:
+                threshold_ha = threshold_map.get(None)
         if threshold_ha is None:
             print(f"[WARNING] {gpkg_path.name}: no region / threshold; skipping")
             continue
@@ -163,17 +234,24 @@ def main() -> int:
 
         kept = gdf.loc[keep].copy()
         if kept.empty:
-            print(f"[INFO] {gpkg_path.name}: kept 0 / {len(gdf)} (thr={threshold_ha} ha)")
+            print(
+                f"[INFO] {gpkg_path.name}: kept 0 / {len(gdf)} "
+                f"(thr={threshold_ha} ha, r{region}, year={year})"
+            )
             continue
 
         kept["source_file"] = gpkg_path.name
         kept["region"] = region
+        kept["year"] = year
         kept["area_m2"] = area_m2.loc[keep].values
         kept["area_ha"] = area_ha.loc[keep].values
         kept["threshold_ha_used"] = float(threshold_ha)
         filtered_frames.append(kept)
         total_after += len(kept)
-        print(f"[INFO] {gpkg_path.name}: kept {len(kept)} / {len(gdf)} (thr={threshold_ha} ha)")
+        print(
+            f"[INFO] {gpkg_path.name}: kept {len(kept)} / {len(gdf)} "
+            f"(thr={threshold_ha} ha, r{region}, year={year})"
+        )
 
     if filtered_frames:
         out_gdf = gpd.GeoDataFrame(
@@ -184,6 +262,7 @@ def main() -> int:
             {
                 "source_file": [],
                 "region": [],
+                "year": [],
                 "area_m2": [],
                 "area_ha": [],
                 "threshold_ha_used": [],
