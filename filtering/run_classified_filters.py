@@ -3,9 +3,9 @@
 Unified classified filtering: temporal first-burn dedup → internal hole fill → LULC.
 
 Runs filter_temporal_first_burn_year.py → refine_burn_mask_closing.py →
-filter_classified_parallel.py in sequence.
+filter_classified_parallel.py → sieve_min_patch_parallel.py (optional) in sequence.
 
-Use --temporal-only, --fill-only, or --lulc-only to run a single stage.
+Use --temporal-only, --fill-only, --lulc-only, or --min-patch-only for a single stage.
 Use --skip-fill to run temporal → LULC without hole fill.
 """
 
@@ -136,13 +136,86 @@ def main() -> int:
         action="store_true",
         help="Run only the LULC mask step (writes to --output-dir).",
     )
+    parser.add_argument(
+        "--min-patch-only",
+        action="store_true",
+        help="Run only the min-patch sieve (--classified-dir = LULC output).",
+    )
+    parser.add_argument(
+        "--skip-min-patch",
+        action="store_true",
+        help="Skip min-patch sieve after LULC.",
+    )
+    parser.add_argument(
+        "--lulc-intermediate-dir",
+        default=None,
+        help="LULC output when min-patch runs afterward (default: <output-dir>/_lulc_intermediate).",
+    )
+    parser.add_argument(
+        "--min-patch-min-pixels",
+        type=int,
+        default=None,
+        help="Remove connected burn components smaller than N pixels.",
+    )
+    parser.add_argument(
+        "--min-patch-min-ha",
+        type=float,
+        default=None,
+        help="Remove connected burn components smaller than this area (ha).",
+    )
+    parser.add_argument(
+        "--min-patch-connectivity",
+        type=int,
+        choices=(4, 8),
+        default=8,
+    )
+    parser.add_argument(
+        "--min-patch-stats-json",
+        default=None,
+        help="JSON path for min-patch sieve statistics.",
+    )
+    parser.add_argument(
+        "--fill-agricultural-holes",
+        action="store_true",
+        help="After LULC, fill enclosed agricultural voids inside burn scars.",
+    )
+    parser.add_argument(
+        "--skip-ag-fill",
+        action="store_true",
+        help="Skip agricultural hole fill even when --fill-agricultural-holes is set.",
+    )
+    parser.add_argument(
+        "--agriculture-masks-dir",
+        default=None,
+        help="Directory with mascara_agricultura_<year>.tif (required for ag fill).",
+    )
+    parser.add_argument(
+        "--ag-fill-only",
+        action="store_true",
+        help="Run only agricultural hole fill (--classified-dir = LULC output).",
+    )
+    parser.add_argument(
+        "--ag-fill-stats-json",
+        default=None,
+        help="JSON path for agricultural hole-fill statistics.",
+    )
     args = parser.parse_args()
 
     single_stage_flags = sum(
-        int(flag) for flag in (args.temporal_only, args.fill_only, args.lulc_only)
+        int(flag)
+        for flag in (
+            args.temporal_only,
+            args.fill_only,
+            args.lulc_only,
+            args.min_patch_only,
+            args.ag_fill_only,
+        )
     )
     if single_stage_flags > 1:
-        raise ValueError("Use at most one of --temporal-only, --fill-only, and --lulc-only.")
+        raise ValueError(
+            "Use at most one of --temporal-only, --fill-only, --lulc-only, "
+            "--min-patch-only, --ag-fill-only."
+        )
 
     classified_dir = Path(args.classified_dir)
     masks_dir = Path(args.masks_dir) if args.masks_dir else None
@@ -159,7 +232,36 @@ def main() -> int:
         and not args.temporal_only
         and not args.lulc_only
     ) or args.fill_only
-    run_lulc = args.lulc_only or not (args.temporal_only or args.fill_only)
+    run_lulc = args.lulc_only or not (
+        args.temporal_only or args.fill_only or args.min_patch_only or args.ag_fill_only
+    )
+    run_ag_fill = (
+        args.fill_agricultural_holes
+        and not args.skip_ag_fill
+        and (
+            args.ag_fill_only
+            or (
+                run_lulc
+                and not args.temporal_only
+                and not args.fill_only
+                and not args.lulc_only
+                and not args.min_patch_only
+            )
+        )
+    )
+    run_min_patch = (
+        not args.skip_min_patch
+        and (args.min_patch_min_pixels is not None or args.min_patch_min_ha is not None)
+        and (
+            args.min_patch_only
+            or (
+                run_lulc
+                and not args.temporal_only
+                and not args.fill_only
+                and not args.lulc_only
+            )
+        )
+    )
 
     if run_lulc:
         if masks_dir is None:
@@ -171,8 +273,17 @@ def main() -> int:
     temporal_script = SCRIPT_DIR / "filter_temporal_first_burn_year.py"
     refine_script = SCRIPT_DIR / "refine_burn_mask_closing.py"
     lulc_script = SCRIPT_DIR / "filter_classified_parallel.py"
+    min_patch_script = SCRIPT_DIR / "sieve_min_patch_parallel.py"
+    ag_fill_script = SCRIPT_DIR / "fill_agricultural_holes_in_scars.py"
 
-    full_pipeline = run_temporal and run_lulc and not args.temporal_only and not args.lulc_only
+    full_pipeline = (
+        run_temporal
+        and run_lulc
+        and not args.temporal_only
+        and not args.lulc_only
+        and not args.min_patch_only
+        and not args.ag_fill_only
+    )
 
     if run_temporal and not args.temporal_only:
         temporal_dir = (
@@ -271,7 +382,14 @@ def main() -> int:
         current_input = fill_dir
 
     if run_lulc:
-        output_dir.mkdir(parents=True, exist_ok=True)
+        lulc_output_dir = output_dir
+        if (run_min_patch or run_ag_fill) and not args.lulc_only:
+            lulc_output_dir = (
+                Path(args.lulc_intermediate_dir)
+                if args.lulc_intermediate_dir
+                else output_dir / "_lulc_intermediate"
+            )
+        lulc_output_dir.mkdir(parents=True, exist_ok=True)
         _run(
             [
                 py,
@@ -281,7 +399,7 @@ def main() -> int:
                 "--masks-dir",
                 str(masks_dir),
                 "--output-dir",
-                str(output_dir),
+                str(lulc_output_dir),
                 "--workers",
                 str(args.workers),
                 "--target-band",
@@ -290,6 +408,66 @@ def main() -> int:
                 str(args.fill_value),
             ]
         )
+        current_input = lulc_output_dir
+
+    if run_ag_fill:
+        if args.agriculture_masks_dir is None:
+            raise ValueError("--agriculture-masks-dir is required for agricultural hole fill.")
+        ag_masks_dir = Path(args.agriculture_masks_dir)
+        if not ag_masks_dir.is_dir():
+            raise FileNotFoundError(f"Agriculture masks dir not found: {ag_masks_dir}")
+        ag_input = current_input if (run_lulc or args.ag_fill_only) else classified_dir
+        ag_output_dir = output_dir
+        ag_output_dir.mkdir(parents=True, exist_ok=True)
+        ag_cmd = [
+            py,
+            str(ag_fill_script),
+            "--input-dir",
+            str(ag_input),
+            "--agriculture-masks-dir",
+            str(ag_masks_dir),
+            "--output-dir",
+            str(ag_output_dir),
+            "--workers",
+            str(args.workers),
+            "--burn-value",
+            "1",
+            "--fill-value",
+            str(int(args.fill_value)),
+        ]
+        if args.name_contains:
+            ag_cmd.extend(["--name-contains", args.name_contains])
+        if args.ag_fill_stats_json:
+            ag_cmd.extend(["--stats-json", args.ag_fill_stats_json])
+        _run(ag_cmd)
+        current_input = ag_output_dir
+
+    if run_min_patch:
+        min_patch_input = current_input if (run_lulc or args.min_patch_only) else classified_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        min_patch_cmd = [
+            py,
+            str(min_patch_script),
+            "--input-dir",
+            str(min_patch_input),
+            "--output-dir",
+            str(output_dir),
+            "--workers",
+            str(args.workers),
+            "--mask-value",
+            "1",
+            "--connectivity",
+            str(args.min_patch_connectivity),
+        ]
+        if args.min_patch_min_pixels is not None:
+            min_patch_cmd.extend(["--min-pixels", str(args.min_patch_min_pixels)])
+        else:
+            min_patch_cmd.extend(["--min-area-ha", str(args.min_patch_min_ha)])
+        if args.name_contains:
+            min_patch_cmd.extend(["--name-contains", args.name_contains])
+        if args.min_patch_stats_json:
+            min_patch_cmd.extend(["--stats-json", args.min_patch_stats_json])
+        _run(min_patch_cmd)
 
     if full_pipeline:
         if run_temporal and not args.keep_temporal_intermediate:
@@ -298,6 +476,15 @@ def main() -> int:
         if run_fill and not args.keep_fill_intermediate:
             shutil.rmtree(fill_dir)
             print(f"[INFO] Removed fill intermediate: {fill_dir}", flush=True)
+        if run_min_patch or run_ag_fill:
+            lulc_intermediate = (
+                Path(args.lulc_intermediate_dir)
+                if args.lulc_intermediate_dir
+                else output_dir / "_lulc_intermediate"
+            )
+            if lulc_intermediate.exists():
+                shutil.rmtree(lulc_intermediate)
+                print(f"[INFO] Removed LULC intermediate: {lulc_intermediate}", flush=True)
 
     print("[INFO] Classified filtering finished.", flush=True)
     return 0

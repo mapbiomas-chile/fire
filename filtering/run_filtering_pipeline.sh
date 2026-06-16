@@ -52,6 +52,12 @@ SKIP_FILL_HOLES="${SKIP_FILL_HOLES:-0}"
 MAX_HOLE_AREA="${MAX_HOLE_AREA:-0}"
 FILL_METHOD="${FILL_METHOD:-fill_holes}"
 
+MIN_PATCH_SIEVE_PIXELS="${MIN_PATCH_SIEVE_PIXELS:-}"
+MIN_PATCH_SIEVE_HA="${MIN_PATCH_SIEVE_HA:-}"
+SKIP_MIN_PATCH_SIEVE="${SKIP_MIN_PATCH_SIEVE:-0}"
+MIN_PATCH_CONNECTIVITY="${MIN_PATCH_CONNECTIVITY:-8}"
+LULC_INTERMEDIATE_DIR="${LULC_INTERMEDIATE_DIR:-${WORK_ROOT}/classified_lulc}"
+
 TEMPORAL_SUFFIX="${TEMPORAL_SUFFIX:-_first_burn_year}"
 TEMPORAL_SPATIAL_MERGE="${TEMPORAL_SPATIAL_MERGE:-0}"
 TEMPORAL_CONNECTIVITY="${TEMPORAL_CONNECTIVITY:-8}"
@@ -64,6 +70,9 @@ LULC_TO_YEAR="${LULC_TO_YEAR:-2024}"
 START_YEAR_BAND1="${START_YEAR_BAND1:-2000}"
 COPY_MASK_2025_FROM_2024="${COPY_MASK_2025_FROM_2024:-1}"
 LULC_STABILITY_WINDOW="${LULC_STABILITY_WINDOW:-4}"
+LULC_AGRICULTURE_STABILITY_WINDOW="${LULC_AGRICULTURE_STABILITY_WINDOW:-}"
+FILL_AGRICULTURAL_HOLES="${FILL_AGRICULTURAL_HOLES:-0}"
+AGRICULTURE_MASKS_DIR="${AGRICULTURE_MASKS_DIR:-${YEARLY_MASKS_DIR}}"
 WORKERS="${WORKERS:-4}"
 FILL_VALUE="${FILL_VALUE:-0}"
 STEPS="${STEPS:-all}"
@@ -96,7 +105,7 @@ steps_need_masks() {
 }
 
 steps_need_classified() {
-  step_enabled "filter" || step_enabled "temporal_first_burn" || step_enabled "fill_holes" || step_enabled "lulc_filter"
+  step_enabled "filter" || step_enabled "temporal_first_burn" || step_enabled "fill_holes" || step_enabled "lulc_filter" || step_enabled "min_patch_sieve" || step_enabled "fill_agricultural_holes"
 }
 
 steps_need_raw_classified_dir() {
@@ -116,7 +125,7 @@ run_unified_filter() {
 
   case "${mode}" in
     full)
-      log "=== Filter: temporal → hole fill → LULC (unified) ==="
+      log "=== Filter: temporal → hole fill → LULC → optional ag fill (unified) ==="
       ;;
     temporal)
       log "=== Filter: temporal first-burn only ==="
@@ -137,6 +146,22 @@ run_unified_filter() {
       fi
       extra_args+=(--lulc-only)
       ;;
+    fill_ag)
+      log "=== Filter: agricultural hole fill only (post-LULC) ==="
+      classified_input="${AG_FILL_INPUT_DIR:-${LULC_INTERMEDIATE_DIR}}"
+      if [[ ! -d "${classified_input}" ]]; then
+        classified_input="${FILTER_OUTPUT_DIR}"
+      fi
+      extra_args+=(--ag-fill-only)
+      ;;
+    min_patch)
+      log "=== Filter: min-patch sieve only (after LULC) ==="
+      classified_input="${MIN_PATCH_INPUT_DIR:-${LULC_INTERMEDIATE_DIR}}"
+      if [[ ! -d "${classified_input}" ]]; then
+        classified_input="${FILTER_OUTPUT_DIR}"
+      fi
+      extra_args+=(--min-patch-only)
+      ;;
     *)
       echo "ERROR: unknown filter mode: ${mode}" >&2
       exit 1
@@ -150,6 +175,16 @@ run_unified_filter() {
 
   if [[ "${mode}" == "lulc" && ! -d "${classified_input}" ]]; then
     echo "ERROR: Input for LULC step not found: ${classified_input}" >&2
+    exit 1
+  fi
+
+  if [[ "${mode}" == "fill_ag" && ! -d "${classified_input}" ]]; then
+    echo "ERROR: Input for agricultural hole fill not found (run LULC first): ${classified_input}" >&2
+    exit 1
+  fi
+
+  if [[ "${mode}" == "min_patch" && ! -d "${classified_input}" ]]; then
+    echo "ERROR: Input for min-patch sieve not found (run LULC first): ${classified_input}" >&2
     exit 1
   fi
 
@@ -171,6 +206,9 @@ run_unified_filter() {
     --fill-method "${FILL_METHOD}"
     --stats-json "${WORK_ROOT}/logs/filter_stats.json"
     --fill-stats-json "${WORK_ROOT}/logs/fill_stats.json"
+    --lulc-intermediate-dir "${LULC_INTERMEDIATE_DIR}"
+    --min-patch-stats-json "${WORK_ROOT}/logs/min_patch_stats.json"
+    --ag-fill-stats-json "${WORK_ROOT}/logs/ag_fill_stats.json"
   )
   if [[ "${TEMPORAL_SPATIAL_MERGE}" == "1" ]]; then
     FILTER_ARGS+=(--spatial-merge)
@@ -185,6 +223,22 @@ run_unified_filter() {
   fi
   if [[ "${SKIP_FILL_HOLES}" == "1" || "${FILL_HOLES}" == "0" ]]; then
     FILTER_ARGS+=(--skip-fill)
+  fi
+  if [[ "${SKIP_MIN_PATCH_SIEVE}" == "1" ]]; then
+    FILTER_ARGS+=(--skip-min-patch)
+  elif [[ -n "${MIN_PATCH_SIEVE_PIXELS}" ]]; then
+    FILTER_ARGS+=(--min-patch-min-pixels "${MIN_PATCH_SIEVE_PIXELS}")
+  elif [[ -n "${MIN_PATCH_SIEVE_HA}" ]]; then
+    FILTER_ARGS+=(--min-patch-min-ha "${MIN_PATCH_SIEVE_HA}")
+  else
+    FILTER_ARGS+=(--skip-min-patch)
+  fi
+  if [[ -n "${MIN_PATCH_CONNECTIVITY}" ]]; then
+    FILTER_ARGS+=(--min-patch-connectivity "${MIN_PATCH_CONNECTIVITY}")
+  fi
+  if [[ "${FILL_AGRICULTURAL_HOLES}" == "1" ]]; then
+    FILTER_ARGS+=(--fill-agricultural-holes)
+    FILTER_ARGS+=(--agriculture-masks-dir "${AGRICULTURE_MASKS_DIR}")
   fi
   if [[ -n "${FILTER_NAME_CONTAINS}" ]]; then
     FILTER_ARGS+=(--name-contains "${FILTER_NAME_CONTAINS}")
@@ -201,6 +255,20 @@ run_unified_filter() {
       log "Hole fill: disabled"
     else
       log "Hole fill: ${FILL_METHOD}, max_hole_area=${MAX_HOLE_AREA} (0=unlimited)"
+    fi
+    if [[ "${SKIP_MIN_PATCH_SIEVE}" == "1" ]]; then
+      log "Min-patch sieve: disabled"
+    elif [[ -n "${MIN_PATCH_SIEVE_PIXELS}" ]]; then
+      log "Min-patch sieve: ${MIN_PATCH_SIEVE_PIXELS} px (after LULC)"
+    elif [[ -n "${MIN_PATCH_SIEVE_HA}" ]]; then
+      log "Min-patch sieve: ${MIN_PATCH_SIEVE_HA} ha (after LULC)"
+    else
+      log "Min-patch sieve: not configured (set MIN_PATCH_SIEVE_PIXELS or MIN_PATCH_SIEVE_HA)"
+    fi
+    if [[ "${FILL_AGRICULTURAL_HOLES}" == "1" ]]; then
+      log "Agricultural hole fill: enabled (masks=${AGRICULTURE_MASKS_DIR})"
+    else
+      log "Agricultural hole fill: disabled"
     fi
   fi
   run_py "${FILTER_ARGS[@]}"
@@ -264,6 +332,9 @@ log "STEPS=${STEPS}"
 if steps_need_masks; then
   log "LULC mask years: ${FROM_YEAR}-${LULC_TO_YEAR} | Filter/classified years: ${FROM_YEAR}-${TO_YEAR}"
   log "LULC stability window (A2): ${LULC_STABILITY_WINDOW} years"
+  if [[ -n "${LULC_AGRICULTURE_STABILITY_WINDOW}" ]]; then
+    log "Agriculture stability window: ${LULC_AGRICULTURE_STABILITY_WINDOW} year(s)"
+  fi
 fi
 
 if step_enabled "masks_accumulated"; then
@@ -275,14 +346,20 @@ fi
 
 if step_enabled "masks_yearly"; then
   log "=== Step 1b: yearly thematic masks ==="
-  run_py filtering/create_yearly_masks.py \
-    --input-tif "${LULC_STACK}" \
-    --output-dir "${YEARLY_MASKS_DIR}" \
-    --start-year-in-band-1 "${START_YEAR_BAND1}" \
-    --from-year "${FROM_YEAR}" \
-    --to-year "${LULC_TO_YEAR}" \
-    --stability-window "${LULC_STABILITY_WINDOW}" \
+  YEARLY_MASK_ARGS=(
+    filtering/create_yearly_masks.py
+    --input-tif "${LULC_STACK}"
+    --output-dir "${YEARLY_MASKS_DIR}"
+    --start-year-in-band-1 "${START_YEAR_BAND1}"
+    --from-year "${FROM_YEAR}"
+    --to-year "${LULC_TO_YEAR}"
+    --stability-window "${LULC_STABILITY_WINDOW}"
     --workers "${WORKERS}"
+  )
+  if [[ -n "${LULC_AGRICULTURE_STABILITY_WINDOW}" ]]; then
+    YEARLY_MASK_ARGS+=(--agriculture-stability-window "${LULC_AGRICULTURE_STABILITY_WINDOW}")
+  fi
+  run_py "${YEARLY_MASK_ARGS[@]}"
 fi
 
 if step_enabled "masks_yearly" && [[ "${TO_YEAR}" -gt "${LULC_TO_YEAR}" ]]; then
@@ -294,6 +371,7 @@ if step_enabled "masks_yearly" && [[ "${TO_YEAR}" -gt "${LULC_TO_YEAR}" ]]; then
     --from-year "${TO_YEAR}" \
     --to-year "${TO_YEAR}" \
     --stability-window "${LULC_STABILITY_WINDOW}" \
+    ${LULC_AGRICULTURE_STABILITY_WINDOW:+--agriculture-stability-window "${LULC_AGRICULTURE_STABILITY_WINDOW}"} \
     --workers 1; then
     log "Built stability masks for filter year ${TO_YEAR}"
   elif [[ "${COPY_MASK_2025_FROM_2024}" == "1" ]]; then
@@ -337,6 +415,14 @@ fi
 
 if step_enabled "lulc_filter"; then
   run_unified_filter lulc
+fi
+
+if step_enabled "min_patch_sieve"; then
+  run_unified_filter min_patch
+fi
+
+if step_enabled "fill_agricultural_holes"; then
+  run_unified_filter fill_ag
 fi
 
 log "=== Pipeline finished ==="

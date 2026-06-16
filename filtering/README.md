@@ -39,6 +39,12 @@ Multi-band LULC stack
         │
         ▼
 ┌───────────────────────────────────────┐
+│ 4c. Ag hole fill (optional)           │  fill_agricultural_holes_in_scars.py
+│     enclosed cropland voids in scars  │
+└───────────────────────────────────────┘
+        │
+        ▼
+┌───────────────────────────────────────┐
 │ 4b. Min-patch sieve (optional)        │  sieve_min_patch_parallel.py
 │     remove small connected patches    │
 └───────────────────────────────────────┘
@@ -188,6 +194,18 @@ python filtering/filter_classified_parallel.py \
   --output-dir /path/to/classified_filtered \
   --workers 4
 ```
+
+---
+
+## 4c. Agricultural hole fill (optional, after LULC)
+
+**Purpose:** after LULC removes cropland pixels, **re-burn** fully enclosed agricultural voids **inside** existing burn scars (MapBiomas often marks fields inside fire perimeters).
+
+Requires **strict agriculture masks** (`LULC_AGRICULTURE_STABILITY_WINDOW=1` or `--agriculture-stability-window 1` in `create_yearly_masks.py`).
+
+**Script:** `fill_agricultural_holes_in_scars.py` (wired into `run_classified_filters.py` with `FILL_AGRICULTURAL_HOLES=1`).
+
+Compare with baseline (`filtering_work`, stability window 4, no ag fill) using `cluster_paths.ag_strict.env.example`.
 
 ---
 

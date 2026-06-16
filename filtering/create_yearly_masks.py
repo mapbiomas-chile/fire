@@ -76,6 +76,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--agriculture-stability-window",
+        type=int,
+        default=None,
+        help=(
+            "Override stability window for agricultura (15) only. "
+            "Use 1 for strict single-year agriculture masking."
+        ),
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=max(1, (os.cpu_count() or 1) - 1),
@@ -107,6 +116,23 @@ def _stable_class_mask(window_arrays: list[np.ndarray], class_value: int) -> np.
     return stable.astype(np.uint8)
 
 
+def _window_years(
+    filter_year: int,
+    stability_window: int,
+    *,
+    lulc_min_year: int,
+    lulc_max_year: int,
+) -> list[int]:
+    if stability_window == 1:
+        return [filter_year]
+    return stability_window_years(
+        filter_year,
+        lulc_min_year=lulc_min_year,
+        lulc_max_year=lulc_max_year,
+        window_size=stability_window,
+    )
+
+
 def _process_one_year(
     input_path_str: str,
     output_dir_str: str,
@@ -115,21 +141,14 @@ def _process_one_year(
     lulc_min_year: int,
     lulc_max_year: int,
     stability_window: int,
-) -> tuple[int, int, list[int]]:
-    """Write four mask GeoTIFFs for one filter year. Returns (year, files_written, window)."""
+    agriculture_stability_window: int | None,
+) -> tuple[int, int, dict[str, list[int]]]:
+    """Write four mask GeoTIFFs for one filter year. Returns (year, files_written, windows)."""
     input_path = Path(input_path_str)
     output_dir = Path(output_dir_str)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if stability_window == 1:
-        window_years = [filter_year]
-    else:
-        window_years = stability_window_years(
-            filter_year,
-            lulc_min_year=lulc_min_year,
-            lulc_max_year=lulc_max_year,
-            window_size=stability_window,
-        )
+    windows_by_class: dict[str, list[int]] = {}
 
     with rasterio.open(input_path) as src:
         profile = src.profile.copy()
@@ -141,17 +160,27 @@ def _process_one_year(
             predictor=2,
             tiled=True,
         )
-        window_arrays = _read_window_stack(src, window_years, start_year_in_band_1)
 
         n = 0
         for class_name, class_value in TARGET_CLASSES:
+            class_window = stability_window
+            if class_name == "agricultura" and agriculture_stability_window is not None:
+                class_window = agriculture_stability_window
+            window_years = _window_years(
+                filter_year,
+                class_window,
+                lulc_min_year=lulc_min_year,
+                lulc_max_year=lulc_max_year,
+            )
+            windows_by_class[class_name] = window_years
+            window_arrays = _read_window_stack(src, window_years, start_year_in_band_1)
             mask = _stable_class_mask(window_arrays, class_value)
             output_path = output_dir / f"mascara_{class_name}_{filter_year}.tif"
             with rasterio.open(output_path, "w", **profile) as dst:
                 dst.write(mask, 1)
             n += 1
 
-    return filter_year, n, window_years
+    return filter_year, n, windows_by_class
 
 
 def main() -> int:
@@ -167,6 +196,8 @@ def main() -> int:
         raise ValueError("--workers must be >= 1")
     if args.stability_window < 1:
         raise ValueError("--stability-window must be >= 1")
+    if args.agriculture_stability_window is not None and args.agriculture_stability_window < 1:
+        raise ValueError("--agriculture-stability-window must be >= 1")
 
     with rasterio.open(input_path) as src:
         lulc_min_year = args.start_year_in_band_1
@@ -178,17 +209,23 @@ def main() -> int:
     in_str = str(input_path.resolve())
     out_str = str(output_dir.resolve())
 
+    ag_note = (
+        f"agriculture_stability_window={args.agriculture_stability_window}"
+        if args.agriculture_stability_window is not None
+        else "agriculture uses --stability-window"
+    )
     print(
         f"[INFO] LULC stack years: {lulc_min_year}-{lulc_max_year} | "
         f"filter years: {args.from_year}-{args.to_year} | "
-        f"stability_window={args.stability_window}",
+        f"stability_window={args.stability_window} | {ag_note}",
         flush=True,
     )
 
-    def _report(year: int, n: int, window: list[int]) -> None:
+    def _report(year: int, n: int, windows: dict[str, list[int]]) -> None:
+        ag_w = windows.get("agricultura", [])
         print(
             f"[INFO] Filter year {year}: wrote {n} mask TIFFs "
-            f"(LULC window {window[0]}-{window[-1]})",
+            f"(ag window {ag_w[0]}-{ag_w[-1] if ag_w else 'n/a'})",
             flush=True,
         )
 
@@ -196,18 +233,19 @@ def main() -> int:
         lulc_min_year,
         lulc_max_year,
         args.stability_window,
+        args.agriculture_stability_window,
     )
 
     if args.workers <= 1:
         for year in years:
-            y, n, window = _process_one_year(
+            y, n, windows = _process_one_year(
                 in_str,
                 out_str,
                 year,
                 args.start_year_in_band_1,
                 *task_kwargs,
             )
-            _report(y, n, window)
+            _report(y, n, windows)
         return 0
 
     print(
@@ -230,10 +268,10 @@ def main() -> int:
         for fut in as_completed(futures):
             year = futures[fut]
             try:
-                y, n, window = fut.result()
+                y, n, windows = fut.result()
             except Exception as e:
                 raise RuntimeError(f"Failed filter year {year}") from e
-            _report(y, n, window)
+            _report(y, n, windows)
 
     return 0
 
