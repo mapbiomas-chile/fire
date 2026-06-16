@@ -13,6 +13,16 @@ Guía para la cola. Detalle del flujo: [README.md](README.md).
 
 ## Configuración
 
+**NLHPC leftraru** (rutas del cluster, en la rama de trabajo):
+
+```bash
+cd ~/fire
+cp filtering/cluster_paths.ag_strict.env.leftraru filtering/cluster_paths.env
+# baseline: cp filtering/cluster_paths.env.leftraru filtering/cluster_paths.env
+```
+
+**Otro entorno** — plantilla genérica:
+
 ```bash
 cd ~/fire
 cp filtering/cluster_paths.env.example filtering/cluster_paths.env
