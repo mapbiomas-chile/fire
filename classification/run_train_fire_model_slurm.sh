@@ -1,7 +1,7 @@
 #!/bin/bash
 #---------------Script SBATCH - NLHPC ----------------
 #SBATCH -J train_fire_model
-#SBATCH -p v100
+#SBATCH -p main
 #SBATCH -n 1
 #SBATCH -c 2
 #SBATCH --mem-per-cpu=16000
