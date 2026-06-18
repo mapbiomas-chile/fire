@@ -102,8 +102,9 @@ def train_xgboost_model(
 def main():
   parser = argparse.ArgumentParser(description="Train XGBoost fire model.")
   parser.add_argument("--country", default="chile")
-  parser.add_argument("--version", required=True)
+  parser.add_argument("--version", required=True, help='Model checkpoint version token, e.g. "v1" or "v2".')
   parser.add_argument("--region", required=True)
+  parser.add_argument("--sample-version", default="v1", help="Filename token in samples_fire_v1_* TIFFs.")
   parser.add_argument("--training-samples-dir", required=True)
   parser.add_argument("--models-dir", required=True)
   parser.add_argument("--seed", type=int, default=42)
@@ -122,15 +123,26 @@ def main():
   parser.add_argument("--log-every", type=int, default=50)
   parser.add_argument("--spatial-window-size", type=int, default=0)
   parser.add_argument("--spatial-feature-bands", nargs="*", default=None)
+  parser.add_argument("--sample-start-year", type=int, default=None)
+  parser.add_argument("--sample-end-year", type=int, default=None)
   args = parser.parse_args()
 
   training_samples_dir = Path(args.training_samples_dir)
   models_dir = Path(args.models_dir)
   models_dir.mkdir(parents=True, exist_ok=True)
 
-  selected_files = select_training_files(training_samples_dir, args.version, args.region)
+  selected_files = select_training_files(
+    training_samples_dir,
+    args.region,
+    sample_version=args.sample_version,
+    sample_start_year=args.sample_start_year,
+    sample_end_year=args.sample_end_year,
+  )
   if not selected_files:
-    raise RuntimeError(f"No training files matched version={args.version} region={args.region}")
+    raise RuntimeError(
+      f"No training files matched model={args.version} region={args.region} "
+      f"years={args.sample_start_year}-{args.sample_end_year}"
+    )
 
   dataset_schema = infer_dataset_schema(selected_files[0])
   spatial_feature_config = build_spatial_feature_config(

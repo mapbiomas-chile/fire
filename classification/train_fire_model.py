@@ -186,6 +186,9 @@ def build_hyperparameters(
       "metric_name": args.metric,
       "spatial_window_size": args.spatial_window_size,
       "spatial_feature_bands": args.spatial_feature_bands,
+      "sample_version": args.sample_version,
+      "sample_start_year": args.sample_start_year,
+      "sample_end_year": args.sample_end_year,
       "seed": args.seed,
       "train_fraction": args.train_fraction,
     },
@@ -195,8 +198,13 @@ def build_hyperparameters(
 def main():
   parser = argparse.ArgumentParser(description="Train fire model (local-only, HPC-friendly).")
   parser.add_argument("--country", default="chile", help="Country token for model naming.")
-  parser.add_argument("--version", required=True, help='Version token, e.g. "v1".')
+  parser.add_argument("--version", required=True, help='Model checkpoint version token, e.g. "v1" or "v2".')
   parser.add_argument("--region", required=True, help='Region token, e.g. "r2".')
+  parser.add_argument(
+    "--sample-version",
+    default="v1",
+    help="Version token in sample filenames (Chile TIFFs are samples_fire_v1_*).",
+  )
   parser.add_argument("--training-samples-dir", required=True, help="Local folder with training sample TIFFs.")
   parser.add_argument("--models-dir", required=True, help="Local output folder for checkpoints and JSON.")
   parser.add_argument("--seed", type=int, default=42, help="Random seed.")
@@ -241,6 +249,18 @@ def main():
     default=None,
     help="Input band name tokens for spatial context (default: auto-detect dNBR/rNBR/NBR).",
   )
+  parser.add_argument(
+    "--sample-start-year",
+    type=int,
+    default=None,
+    help="Keep training samples whose filename year is >= this value.",
+  )
+  parser.add_argument(
+    "--sample-end-year",
+    type=int,
+    default=None,
+    help="Keep training samples whose filename year is <= this value.",
+  )
   args = parser.parse_args()
 
   training_samples_dir = Path(args.training_samples_dir)
@@ -250,12 +270,21 @@ def main():
   if not training_samples_dir.exists():
     raise FileNotFoundError(f"Training samples dir does not exist: {training_samples_dir}")
 
-  selected_files = select_training_files(training_samples_dir, args.version, args.region)
+  selected_files = select_training_files(
+    training_samples_dir,
+    args.region,
+    sample_version=args.sample_version,
+    sample_start_year=args.sample_start_year,
+    sample_end_year=args.sample_end_year,
+  )
   if not selected_files:
     available = [p.name for p in sorted(training_samples_dir.glob("*.tif"))]
     raise RuntimeError(
-      "No training files matched the selected version/region.\n"
-      f"selector: trainings_{args.version}_{args.region}\n"
+      "No training files matched the selected region/year window.\n"
+      f"model_version: {args.version}\n"
+      f"sample_version (filename): {args.sample_version}\n"
+      f"region: {args.region}\n"
+      f"years: {args.sample_start_year}-{args.sample_end_year}\n"
       f"dir: {training_samples_dir}\n"
       f"available_tifs: {available}"
     )

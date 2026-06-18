@@ -37,21 +37,58 @@ for p in files:
 PY
 ```
 
-Cada TIFF debe tener banda `landcover` y nombres que coincidan con `*_<version>_*_<region>_*.tif`.
+Cada TIFF debe tener banda `landcover` y nombres tipo:
 
-## Entrenamiento (modelos mejorados)
+```text
+samples_fire_v1_b14_chile_r1_chile_matorral_20130000000000-0000000000.tif
+```
+
+El **v1 en el nombre del archivo** no es el modelo final: define qué TIFFs leer (`SAMPLE_VERSION=v1`).  
+El **v1/v2 del checkpoint** (`col1_chile_v1_r1_...` vs `col1_chile_v2_r1_...`) se elige por **rango de años** en el nombre del sample.
+
+| Checkpoint | Región | Años en muestras |
+|------------|--------|------------------|
+| v1 | r1, r4, r6 | 2013–2018 |
+| v2 | r1, r4, r6 | 2019–2025 |
+| v1 | r2 | 2013–2018 |
+
+Preview (sin entrenar):
+
+```bash
+cd ~/fire/classification
+python preview_training_campaign.py /home/flepin/samples_col1
+```
+
+## Entrenamiento — campaña completa (7 modelos)
 
 ```bash
 cd ~/fire
-git pull origin feature/model_modification   # si acabas de actualizar rutas
-
 cp classification/cluster_paths.model_modification.env.leftraru classification/cluster_paths.env
 source classification/cluster_paths.env
 
-# Por defecto: r2 + v1. Cambiar región/versión si hace falta:
-# export TRAIN_REGION=r2
-# export TRAIN_VERSION=v1
+bash classification/run_train_chile_campaign.sh --dry-run
+bash classification/run_train_chile_campaign.sh
+```
 
+Genera en `/home/flepin/models_col1_20260618/`:
+
+```text
+col1_chile_v1_r1_rnn_lstm_ckpt*
+col1_chile_v2_r1_rnn_lstm_ckpt*
+col1_chile_v1_r4_rnn_lstm_ckpt*
+col1_chile_v2_r4_rnn_lstm_ckpt*
+col1_chile_v1_r6_rnn_lstm_ckpt*
+col1_chile_v2_r6_rnn_lstm_ckpt*
+col1_chile_v1_r2_rnn_lstm_ckpt*
+```
+
+## Entrenamiento — un solo modelo
+
+```bash
+export TRAIN_REGION=r1
+export TRAIN_VERSION=v2
+export SAMPLE_START_YEAR=2019
+export SAMPLE_END_YEAR=2025
 sbatch classification/run_train_fire_model_slurm.sh
 ```
 

@@ -360,9 +360,74 @@ def _json_default(value):
   raise TypeError(f"Object of type {type(value)!r} is not JSON serializable")
 
 
-def select_training_files(training_samples_dir: Path, version: str, region: str) -> list[Path]:
-  pattern = re.compile(rf".*_({version})_.*_{region}_.*\.tif$")
-  return [p for p in sorted(training_samples_dir.glob("*.tif")) if pattern.search(p.name)]
+def extract_sample_year(sample_path: Path) -> int | None:
+  """Parse calendar year from a training-sample filename."""
+  stem = sample_path.stem
+  candidates = [int(year) for year in re.findall(r"(?:^|_)(20(?:1[3-9]|2[0-5]))", stem)]
+  if candidates:
+    return candidates[-1]
+
+  for token in re.findall(r"(20\d{2})", stem):
+    year = int(token)
+    if 2013 <= year <= 2030:
+      return year
+  return None
+
+
+def select_training_files(
+  training_samples_dir: Path,
+  region: str,
+  sample_version: str = "v1",
+  sample_start_year: int | None = None,
+  sample_end_year: int | None = None,
+) -> list[Path]:
+  """
+  Select training TIFFs by region and optional year window.
+
+  Chile samples are named samples_fire_v1_..._rN_..._YYYY....tif — the token v1/v2
+  in the *model checkpoint* is not necessarily present in filenames. Use
+  sample_version for the filename token (default v1) and filter years separately.
+  """
+  pattern = re.compile(
+    rf".*_({re.escape(sample_version)})_.*_{re.escape(region)}_.*\.tif$",
+    re.IGNORECASE,
+  )
+  files = [p for p in sorted(training_samples_dir.glob("*.tif")) if pattern.search(p.name)]
+
+  if sample_start_year is None and sample_end_year is None:
+    return files
+
+  selected: list[Path] = []
+  missing_year: list[str] = []
+  for path in files:
+    year = extract_sample_year(path)
+    if year is None:
+      missing_year.append(path.name)
+      continue
+    if sample_start_year is not None and year < sample_start_year:
+      continue
+    if sample_end_year is not None and year > sample_end_year:
+      continue
+    selected.append(path)
+
+  if missing_year:
+    print(
+      f"[WARNING] Skipped {len(missing_year)} sample(s) with no parseable year in filename: "
+      f"{missing_year[:5]}{'...' if len(missing_year) > 5 else ''}"
+    )
+  return selected
+
+
+CHILE_TRAINING_CAMPAIGN: list[dict[str, int | str]] = [
+  # Model v1/v2 is the checkpoint name; samples on disk are samples_fire_v1_*.
+  {"region": "r1", "model_version": "v1", "sample_start_year": 2013, "sample_end_year": 2018},
+  {"region": "r1", "model_version": "v2", "sample_start_year": 2019, "sample_end_year": 2025},
+  {"region": "r4", "model_version": "v1", "sample_start_year": 2013, "sample_end_year": 2018},
+  {"region": "r4", "model_version": "v2", "sample_start_year": 2019, "sample_end_year": 2025},
+  {"region": "r6", "model_version": "v1", "sample_start_year": 2013, "sample_end_year": 2018},
+  {"region": "r6", "model_version": "v2", "sample_start_year": 2019, "sample_end_year": 2025},
+  {"region": "r2", "model_version": "v1", "sample_start_year": 2013, "sample_end_year": 2018},
+]
 
 
 def prepare_mosaic_feature_matrix(

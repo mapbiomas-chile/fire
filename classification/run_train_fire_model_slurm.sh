@@ -33,6 +33,9 @@ PYTHON="${PYTHON:-${HOME}/.conda/envs/mb_fuego/bin/python}"
 COUNTRY="${COUNTRY:-chile}"
 TRAIN_VERSION="${TRAIN_VERSION:-${MODEL_VERSION:-v1}}"
 TRAIN_REGION="${TRAIN_REGION:-${REGION:-r2}}"
+SAMPLE_VERSION="${SAMPLE_VERSION:-v1}"
+SAMPLE_START_YEAR="${SAMPLE_START_YEAR:-}"
+SAMPLE_END_YEAR="${SAMPLE_END_YEAR:-}"
 TRAINING_SAMPLES_DIR="${TRAINING_SAMPLES_DIR:-${HOME}/training_samples}"
 MODELS_DIR="${MODELS_DIR:-${HOME}/models_col1_20260618}"
 TRAIN_BACKEND="${TRAIN_BACKEND:-tensorflow}"
@@ -46,16 +49,28 @@ TRAIN_SEED="${TRAIN_SEED:-42}"
 
 mkdir -p "${MODELS_DIR}"
 
+echo "[INFO] Training ${TRAIN_REGION} model ${TRAIN_VERSION}"
+echo "[INFO] Sample files: ${SAMPLE_VERSION} in filename, years ${SAMPLE_START_YEAR:-*}-${SAMPLE_END_YEAR:-*}"
+echo "[INFO] Output: ${MODELS_DIR}/col1_${COUNTRY}_${TRAIN_VERSION}_${TRAIN_REGION}_rnn_lstm_ckpt"
+
 common_args=(
   --country "${COUNTRY}"
   --version "${TRAIN_VERSION}"
   --region "${TRAIN_REGION}"
+  --sample-version "${SAMPLE_VERSION}"
   --training-samples-dir "${TRAINING_SAMPLES_DIR}"
   --models-dir "${MODELS_DIR}"
   --seed "${TRAIN_SEED}"
   --validation-split "${TRAIN_VALIDATION_SPLIT}"
   --metric "${TRAIN_METRIC}"
 )
+
+if [[ -n "${SAMPLE_START_YEAR}" ]]; then
+  common_args+=(--sample-start-year "${SAMPLE_START_YEAR}")
+fi
+if [[ -n "${SAMPLE_END_YEAR}" ]]; then
+  common_args+=(--sample-end-year "${SAMPLE_END_YEAR}")
+fi
 
 if [[ "${TRAIN_SPATIAL_WINDOW_SIZE}" -ge 3 ]]; then
   common_args+=(--spatial-window-size "${TRAIN_SPATIAL_WINDOW_SIZE}")
