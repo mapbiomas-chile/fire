@@ -34,11 +34,25 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/cluster_paths.env" ]]; then
+REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
+CLASSIFICATION_DIR="${REPO_ROOT}/classification"
+
+# Preserve REGION/MODEL_DIR from sbatch --export before loading shared defaults.
+_SAVED_REGION="${REGION:-}"
+_SAVED_MODEL_DIR="${MODEL_DIR:-}"
+_SAVED_OUTPUT_DIR="${OUTPUT_DIR:-}"
+
+if [[ -f "${CLASSIFICATION_DIR}/cluster_paths.env" ]]; then
   # shellcheck source=/dev/null
-  source "${SCRIPT_DIR}/cluster_paths.env"
+  source "${CLASSIFICATION_DIR}/cluster_paths.env"
 fi
+
+REGION="${_SAVED_REGION:-${REGION:-}}"
+MODEL_DIR="${_SAVED_MODEL_DIR:-${MODEL_DIR:-}}"
+OUTPUT_DIR="${_SAVED_OUTPUT_DIR:-${OUTPUT_DIR:-}}"
+unset _SAVED_REGION _SAVED_MODEL_DIR _SAVED_OUTPUT_DIR
+
+SCRIPT_DIR="${CLASSIFICATION_DIR}"
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-22}"
 export TF_NUM_INTRAOP_THREADS="${TF_NUM_INTRAOP_THREADS:-22}"

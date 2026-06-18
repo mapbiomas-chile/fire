@@ -140,6 +140,27 @@ Comparar en QGIS:
 - baseline: `/home/flepin/classification_20260616/`
 - experimental: `/home/flepin/classification_model_mod_test/`
 
+## Clasificación serie completa 2013–2025 (modelos 20260618)
+
+```bash
+cd ~/fire
+cp classification/cluster_paths.classify_20260618.env.leftraru classification/cluster_paths.env
+source classification/cluster_paths.env
+
+bash classification/run_classify_chile_campaign.sh --dry-run
+bash classification/run_classify_chile_campaign.sh
+```
+
+- **4 jobs Slurm** (uno por región: r1, r2, r4, r6), pueden correr en paralelo
+- **Modelos:** `/home/flepin/models_col1_20260618`
+- **Salida:** `/home/flepin/classification_20260618`
+- **Walltime:** 3 h 30 min por región (~13 años)
+
+```bash
+squeue -u flepin
+ls /home/flepin/classification_20260618/*_classified.tif | wc -l   # meta: 52 (13×4)
+```
+
 ## Clasificación (modelos existentes en producción)
 
 ```bash
