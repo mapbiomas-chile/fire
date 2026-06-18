@@ -1,8 +1,5 @@
 #!/bin/bash
-# Submit all Chile training jobs (7 checkpoints) with year-filtered samples.
-#
-# Samples on disk: samples_fire_v1_b14_chile_rN_..._YYYY....tif
-# Model v1/v2 is the checkpoint name; filename token stays v1.
+# Submit Chile training campaign as a single Slurm job (7 models, 1 hour).
 #
 #   cd ~/fire
 #   cp classification/cluster_paths.model_modification.env.leftraru classification/cluster_paths.env
@@ -23,8 +20,6 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   DRY_RUN=1
 fi
 
-SAMPLE_VERSION="${SAMPLE_VERSION:-v1}"
-
 declare -a JOBS=(
   "r1:v1:2013:2018"
   "r1:v2:2019:2025"
@@ -37,28 +32,24 @@ declare -a JOBS=(
 
 echo "============================================="
 echo "CHILE TRAINING CAMPAIGN"
+echo "  Mode:        single Slurm job (1 h walltime)"
 echo "  Samples:     ${TRAINING_SAMPLES_DIR:-${HOME}/samples_col1}"
 echo "  Output:      ${MODELS_DIR:-${HOME}/models_col1_20260618}"
-echo "  Sample token:  ${SAMPLE_VERSION} (filename)"
-echo "  Jobs:          ${#JOBS[@]}"
+echo "  Models:      ${#JOBS[@]}"
 echo "============================================="
 
 for job in "${JOBS[@]}"; do
   IFS=: read -r region model_version start_year end_year <<< "${job}"
-  job_name="train_${region}_${model_version}"
-  exports="ALL,TRAIN_REGION=${region},TRAIN_VERSION=${model_version},SAMPLE_VERSION=${SAMPLE_VERSION},SAMPLE_START_YEAR=${start_year},SAMPLE_END_YEAR=${end_year}"
-
-  if [[ "${DRY_RUN}" == "1" ]]; then
-    echo "[DRY-RUN] ${job_name}  years=${start_year}-${end_year}  -> col1_chile_${model_version}_${region}_rnn_lstm_ckpt"
-    continue
-  fi
-
-  job_id="$(sbatch -J "${job_name}" --export="${exports}" "${SCRIPT_DIR}/run_train_fire_model_slurm.sh" | awk '{print $4}')"
-  echo "[SUBMIT] ${job_name}  job_id=${job_id}  years=${start_year}-${end_year}"
+  echo "[PLAN] ${region} ${model_version}  years=${start_year}-${end_year}  -> col1_chile_${model_version}_${region}_rnn_lstm_ckpt"
 done
 
 if [[ "${DRY_RUN}" == "1" ]]; then
   echo ""
-  echo "Preview sample lists:"
   python "${SCRIPT_DIR}/preview_training_campaign.py" "${TRAINING_SAMPLES_DIR:-${HOME}/samples_col1}"
+  exit 0
 fi
+
+job_id="$(sbatch "${SCRIPT_DIR}/run_train_chile_campaign_slurm.sh" | awk '{print $4}')"
+echo ""
+echo "[SUBMIT] train_chile_campaign  job_id=${job_id}  walltime=01:00:00"
+echo "  tail -f ~/logs/train_chile_campaign_${job_id}.out"

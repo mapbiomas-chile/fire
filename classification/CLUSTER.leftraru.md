@@ -59,7 +59,9 @@ cd ~/fire/classification
 python preview_training_campaign.py /home/flepin/samples_col1
 ```
 
-## Entrenamiento — campaña completa (7 modelos)
+## Entrenamiento — campaña completa (7 modelos, **1 job**)
+
+Un solo `sbatch` entrena los 7 checkpoints en secuencia (~6 min c/u → ~1 h de margen).
 
 ```bash
 cd ~/fire
@@ -68,6 +70,12 @@ source classification/cluster_paths.env
 
 bash classification/run_train_chile_campaign.sh --dry-run
 bash classification/run_train_chile_campaign.sh
+```
+
+Equivale a: `sbatch classification/run_train_chile_campaign_slurm.sh` (walltime **01:00:00**).
+
+```bash
+tail -f ~/logs/train_chile_campaign_<JOBID>.out
 ```
 
 Genera en `/home/flepin/models_col1_20260618/`:
@@ -156,7 +164,8 @@ El walltime que pides en `sbatch` es el **máximo** que Slurm reserva; aunque el
 
 | Tarea | Default en script | Regla práctica |
 |-------|-------------------|----------------|
-| Entrenamiento MLP/XGBoost | **30 min** | Suele bastar; si TIMEOUT: `sbatch -t 01:00:00 ...` |
+| Entrenamiento campaña (7 modelos) | **1 h** (1 job secuencial) | ~6 min × 7 ≈ 42 min |
+| Entrenamiento un modelo | **30 min** | `run_train_fire_model_slurm.sh` |
 | Clasificación por región | **1 h 30 min** | ~10–15 min × número de años |
 | Un solo año | `run_classify_fire_model_slurm*.sh` ~30–40 min | Acotar `START_YEAR=END_YEAR` |
 
