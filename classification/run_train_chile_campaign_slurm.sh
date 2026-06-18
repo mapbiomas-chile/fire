@@ -17,10 +17,21 @@
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/cluster_paths.env" ]]; then
+REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
+CLASSIFICATION_DIR="${REPO_ROOT}/classification"
+
+if [[ -f "${CLASSIFICATION_DIR}/cluster_paths.env" ]]; then
   # shellcheck source=/dev/null
-  source "${SCRIPT_DIR}/cluster_paths.env"
+  source "${CLASSIFICATION_DIR}/cluster_paths.env"
+fi
+
+REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
+CLASSIFICATION_DIR="${REPO_ROOT}/classification"
+TRAIN_ONCE="${CLASSIFICATION_DIR}/train_fire_model_once.sh"
+
+if [[ ! -f "${TRAIN_ONCE}" ]]; then
+  echo "[ERROR] Not found: ${TRAIN_ONCE}"
+  exit 1
 fi
 
 SAMPLE_VERSION="${SAMPLE_VERSION:-v1}"
@@ -58,7 +69,7 @@ for job in "${JOBS[@]}"; do
   export SAMPLE_START_YEAR="${start_year}"
   export SAMPLE_END_YEAR="${end_year}"
 
-  if bash "${SCRIPT_DIR}/train_fire_model_once.sh"; then
+  if bash "${TRAIN_ONCE}"; then
     passed=$((passed + 1))
     step_secs=$(( $(date +%s) - step_start ))
     echo "[INFO] OK ${region} ${model_version} in ${step_secs}s"

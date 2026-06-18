@@ -4,13 +4,16 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/cluster_paths.env" ]]; then
+REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
+CLASSIFICATION_DIR="${REPO_ROOT}/classification"
+
+if [[ -f "${CLASSIFICATION_DIR}/cluster_paths.env" ]]; then
   # shellcheck source=/dev/null
-  source "${SCRIPT_DIR}/cluster_paths.env"
+  source "${CLASSIFICATION_DIR}/cluster_paths.env"
 fi
 
 REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
+CLASSIFICATION_DIR="${REPO_ROOT}/classification"
 PYTHON="${PYTHON:-${HOME}/.conda/envs/mb_fuego/bin/python}"
 
 COUNTRY="${COUNTRY:-chile}"

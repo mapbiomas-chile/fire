@@ -17,5 +17,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bash "${SCRIPT_DIR}/train_fire_model_once.sh"
+REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
+CLASSIFICATION_DIR="${REPO_ROOT}/classification"
+bash "${CLASSIFICATION_DIR}/train_fire_model_once.sh"

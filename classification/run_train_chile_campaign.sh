@@ -49,7 +49,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   exit 0
 fi
 
-job_id="$(sbatch "${SCRIPT_DIR}/run_train_chile_campaign_slurm.sh" | awk '{print $4}')"
+job_id="$(sbatch --export=ALL "${SCRIPT_DIR}/run_train_chile_campaign_slurm.sh" | awk '{print $4}')"
 echo ""
 echo "[SUBMIT] train_chile_campaign  job_id=${job_id}  walltime=01:00:00"
 echo "  tail -f ~/logs/train_chile_campaign_${job_id}.out"
