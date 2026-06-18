@@ -62,7 +62,7 @@ squeue -u flepin
 tail -f ~/logs/train_fire_model_<JOBID>.out
 ```
 
-Salida: `/home/flepin/models_col1_model_mod/col1_chile_<version>_<region>_rnn_lstm_ckpt*`
+Salida: `/home/flepin/models_col1_20260618/col1_chile_<version>_<region>_rnn_lstm_ckpt*`
 
 El job usa partición **main** (CPU; el MLP no necesita GPU).
 
@@ -78,7 +78,7 @@ sbatch classification/run_train_fire_model_slurm.sh
 Después del entrenamiento, clasificar un año de prueba contra el modelo experimental:
 
 ```bash
-export MODEL_DIR="/home/flepin/models_col1_model_mod"
+export MODEL_DIR="/home/flepin/models_col1_20260618"
 export MODEL_NAME="col1_chile_v1_r2_rnn_lstm_ckpt"
 export OUTPUT_DIR="/home/flepin/classification_model_mod_test"
 export REGION=r2
