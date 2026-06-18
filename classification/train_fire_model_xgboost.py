@@ -21,7 +21,7 @@ from fire_model_common import (
   infer_dataset_schema,
   load_scene_matrices,
   save_hyperparameters,
-  select_training_files,
+  resolve_training_files,
   split_files_by_scene,
 )
 
@@ -125,18 +125,24 @@ def main():
   parser.add_argument("--spatial-feature-bands", nargs="*", default=None)
   parser.add_argument("--sample-start-year", type=int, default=None)
   parser.add_argument("--sample-end-year", type=int, default=None)
+  parser.add_argument("--sample-files", nargs="*", default=None)
+  parser.add_argument("--sample-list-file", default=None)
+  parser.add_argument("--sample-name-contains", default=None)
   args = parser.parse_args()
 
   training_samples_dir = Path(args.training_samples_dir)
   models_dir = Path(args.models_dir)
   models_dir.mkdir(parents=True, exist_ok=True)
 
-  selected_files = select_training_files(
+  selected_files = resolve_training_files(
     training_samples_dir,
     args.region,
     sample_version=args.sample_version,
     sample_start_year=args.sample_start_year,
     sample_end_year=args.sample_end_year,
+    sample_files=args.sample_files,
+    sample_list_file=Path(args.sample_list_file) if args.sample_list_file else None,
+    sample_name_contains=args.sample_name_contains,
   )
   if not selected_files:
     raise RuntimeError(

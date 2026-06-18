@@ -32,7 +32,7 @@ from fire_model_common import (
   maybe_subsample_pixels,
   sample_training_batch,
   save_hyperparameters,
-  select_training_files,
+  resolve_training_files,
   split_files_by_scene,
 )
 
@@ -283,6 +283,22 @@ def main():
     help="Keep training samples whose filename year is <= this value.",
   )
   parser.add_argument(
+    "--sample-files",
+    nargs="*",
+    default=None,
+    help="Explicit training sample basenames or paths (overrides glob/year filter).",
+  )
+  parser.add_argument(
+    "--sample-list-file",
+    default=None,
+    help="Text file with one training sample basename per line (# comments allowed).",
+  )
+  parser.add_argument(
+    "--sample-name-contains",
+    default=None,
+    help="Keep only samples whose filename contains this substring.",
+  )
+  parser.add_argument(
     "--max-training-pixels",
     type=int,
     default=None,
@@ -309,12 +325,15 @@ def main():
   if not training_samples_dir.exists():
     raise FileNotFoundError(f"Training samples dir does not exist: {training_samples_dir}")
 
-  selected_files = select_training_files(
+  selected_files = resolve_training_files(
     training_samples_dir,
     args.region,
     sample_version=args.sample_version,
     sample_start_year=args.sample_start_year,
     sample_end_year=args.sample_end_year,
+    sample_files=args.sample_files,
+    sample_list_file=Path(args.sample_list_file) if args.sample_list_file else None,
+    sample_name_contains=args.sample_name_contains,
   )
   if not selected_files:
     available = [p.name for p in sorted(training_samples_dir.glob("*.tif"))]
@@ -394,6 +413,7 @@ def main():
     class_weights,
     args,
   )
+  hyperparameters["TRAINING_SAMPLE_FILES"] = [path.name for path in selected_files]
 
   model_base = f"col1_{args.country}_{args.version}_{args.region}_rnn_lstm_ckpt"
   model_path = models_dir / model_base

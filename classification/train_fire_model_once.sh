@@ -15,6 +15,7 @@ SAMPLE_VERSION="${SAMPLE_VERSION:-v1}"
 SAMPLE_START_YEAR="${SAMPLE_START_YEAR:-}"
 SAMPLE_END_YEAR="${SAMPLE_END_YEAR:-}"
 TRAINING_SAMPLES_DIR="${TRAINING_SAMPLES_DIR:-${HOME}/samples_col1}"
+TRAINING_SAMPLE_LIST="${TRAINING_SAMPLE_LIST:-}"
 MODELS_DIR="${MODELS_DIR:-${HOME}/models_col1_20260618}"
 TRAIN_BACKEND="${TRAIN_BACKEND:-tensorflow}"
 TRAIN_VALIDATION_SPLIT="${TRAIN_VALIDATION_SPLIT:-by_file}"
@@ -41,7 +42,11 @@ mkdir -p "${MODELS_DIR}"
 
 echo "---------------------------------------------"
 echo "[INFO] Training ${TRAIN_REGION} model ${TRAIN_VERSION}"
-echo "[INFO] Sample files: ${SAMPLE_VERSION} in filename, years ${SAMPLE_START_YEAR:-*}-${SAMPLE_END_YEAR:-*}"
+if [[ -n "${TRAINING_SAMPLE_LIST}" ]]; then
+  echo "[INFO] Sample list: ${TRAINING_SAMPLE_LIST}"
+else
+  echo "[INFO] Sample files: ${SAMPLE_VERSION} in filename, years ${SAMPLE_START_YEAR:-*}-${SAMPLE_END_YEAR:-*}"
+fi
 echo "[INFO] Output: ${MODELS_DIR}/col1_${COUNTRY}_${TRAIN_VERSION}_${TRAIN_REGION}_rnn_lstm_ckpt"
 echo "---------------------------------------------"
 
@@ -62,6 +67,9 @@ if [[ -n "${SAMPLE_START_YEAR}" ]]; then
 fi
 if [[ -n "${SAMPLE_END_YEAR}" ]]; then
   common_args+=(--sample-end-year "${SAMPLE_END_YEAR}")
+fi
+if [[ -n "${TRAINING_SAMPLE_LIST}" ]]; then
+  common_args+=(--sample-list-file "${TRAINING_SAMPLE_LIST}")
 fi
 
 if [[ "${TRAIN_SPATIAL_WINDOW_SIZE}" -ge 3 ]]; then

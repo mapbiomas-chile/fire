@@ -125,6 +125,27 @@ sbatch --export=ALL classification/run_classify_region_slurm.sh
 
 For legacy production models, set `MODEL_DIR=/home/flepin/models_col1` and `OUTPUT_DIR=/home/flepin/classification_20260616` in `cluster_paths.env`.
 
+### r2 isolated — matorral-only training (8 samples)
+
+Train `col1_chile_v1_r2_rnn_lstm_ckpt` from an explicit sample list, then classify **r2 only** (2013–2025):
+
+```bash
+cp classification/cluster_paths.train_r2_matorral.env.leftraru classification/cluster_paths.env
+source classification/cluster_paths.env
+bash classification/run_train_r2_matorral.sh
+
+cp classification/cluster_paths.classify_r2_matorral.env.leftraru classification/cluster_paths.env
+source classification/cluster_paths.env
+sbatch --export=ALL classification/run_classify_chile_slurm.sh
+
+cp filtering/cluster_paths.r2_matorral.env.leftraru filtering/cluster_paths.env
+source filtering/cluster_paths.env
+bash filtering/run_filtering_pipeline.sh
+```
+
+Sample list: `classification/training_samples_r2_matorral_v1.txt` (years 2013, 2016–2018, matorral tiles only).  
+Checkpoint: `/home/flepin/models_col1_r2_matorral/` (does not overwrite the 7-model campaign until you copy it).
+
 ### Compute notes
 
 | Task | Walltime (script default) | Partition |

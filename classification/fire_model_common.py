@@ -457,6 +457,76 @@ def select_training_files(
   return selected
 
 
+def _read_sample_list_file(sample_list_file: Path) -> list[str]:
+  entries: list[str] = []
+  with sample_list_file.open(encoding="utf-8") as handle:
+    for line in handle:
+      stripped = line.strip()
+      if not stripped or stripped.startswith("#"):
+        continue
+      entries.append(stripped)
+  return entries
+
+
+def resolve_training_files(
+  training_samples_dir: Path,
+  region: str,
+  sample_version: str = "v1",
+  sample_start_year: int | None = None,
+  sample_end_year: int | None = None,
+  sample_files: list[str] | None = None,
+  sample_list_file: Path | None = None,
+  sample_name_contains: str | None = None,
+) -> list[Path]:
+  """
+  Resolve training TIFFs: explicit list/manifest wins over directory glob + year filter.
+  """
+  explicit_names: list[str] = list(sample_files or [])
+  if sample_list_file is not None:
+    if not sample_list_file.is_file():
+      raise FileNotFoundError(f"Sample list file not found: {sample_list_file}")
+    explicit_names.extend(_read_sample_list_file(sample_list_file))
+
+  if explicit_names:
+    resolved: list[Path] = []
+    missing: list[str] = []
+    for entry in explicit_names:
+      candidate = Path(entry)
+      if candidate.is_file():
+        resolved.append(candidate.resolve())
+        continue
+      for path in (training_samples_dir / entry, training_samples_dir / f"{entry}.tif"):
+        if path.is_file():
+          resolved.append(path.resolve())
+          break
+      else:
+        missing.append(entry)
+
+    if missing:
+      raise FileNotFoundError(
+        "Training sample(s) not found under "
+        f"{training_samples_dir}: {missing}"
+      )
+
+    region_token = f"_{region}_"
+    wrong_region = [p.name for p in resolved if region_token not in p.name]
+    if wrong_region:
+      raise ValueError(f"Sample list includes files outside region {region}: {wrong_region}")
+
+    return sorted({path for path in resolved}, key=lambda p: p.name)
+
+  files = select_training_files(
+    training_samples_dir,
+    region,
+    sample_version=sample_version,
+    sample_start_year=sample_start_year,
+    sample_end_year=sample_end_year,
+  )
+  if sample_name_contains:
+    files = [path for path in files if sample_name_contains in path.name]
+  return files
+
+
 CHILE_TRAINING_CAMPAIGN: list[dict[str, int | str]] = [
   # Model v1/v2 is the checkpoint name; samples on disk are samples_fire_v1_*.
   {"region": "r1", "model_version": "v1", "sample_start_year": 2013, "sample_end_year": 2018},
