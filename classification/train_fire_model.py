@@ -29,6 +29,7 @@ from fire_model_common import (
   find_optimal_threshold,
   infer_dataset_schema,
   load_scene_matrices,
+  maybe_subsample_pixels,
   sample_training_batch,
   save_hyperparameters,
   select_training_files,
@@ -36,6 +37,21 @@ from fire_model_common import (
 )
 
 tf.disable_v2_behavior()
+
+
+def predict_burned_probabilities(sess, tensors, features: np.ndarray, block_size: int = 500_000) -> np.ndarray:
+  if features.shape[0] == 0:
+    return np.array([], dtype=np.float32)
+
+  blocks = []
+  for start in range(0, features.shape[0], block_size):
+    end = min(start + block_size, features.shape[0])
+    probs = sess.run(
+      tensors["burned_probabilities"],
+      feed_dict={tensors["x_input"]: features[start:end]},
+    )[:, BURNED_CLASS_INDEX]
+    blocks.append(probs)
+  return np.concatenate(blocks, axis=0)
 
 
 def train_model(
@@ -50,6 +66,7 @@ def train_model(
   metric_name,
   log_every,
   seed,
+  inference_block_size=500_000,
 ):
   batch_size = int(hyperparameters["TRAINING_CONFIG"]["batch_size"])
   n_iter = int(hyperparameters["TRAINING_CONFIG"]["n_iter"])
@@ -94,10 +111,12 @@ def train_model(
       )
 
       if iteration % log_every == 0 or iteration == n_iter:
-        burned_probs = sess.run(
-          tensors["burned_probabilities"],
-          feed_dict={tensors["x_input"]: validation_features},
-        )[:, BURNED_CLASS_INDEX]
+        burned_probs = predict_burned_probabilities(
+          sess,
+          tensors,
+          validation_features,
+          block_size=inference_block_size,
+        )
         threshold, metrics = find_optimal_threshold(
           validation_labels,
           burned_probs,
@@ -189,6 +208,8 @@ def build_hyperparameters(
       "sample_version": args.sample_version,
       "sample_start_year": args.sample_start_year,
       "sample_end_year": args.sample_end_year,
+      "max_training_pixels": args.max_training_pixels,
+      "max_validation_pixels": args.max_validation_pixels,
       "seed": args.seed,
       "train_fraction": args.train_fraction,
     },
@@ -261,6 +282,24 @@ def main():
     default=None,
     help="Keep training samples whose filename year is <= this value.",
   )
+  parser.add_argument(
+    "--max-training-pixels",
+    type=int,
+    default=None,
+    help="Randomly cap training pixels to limit RAM (validation unchanged unless --max-validation-pixels).",
+  )
+  parser.add_argument(
+    "--max-validation-pixels",
+    type=int,
+    default=None,
+    help="Randomly cap validation pixels used for metrics during training.",
+  )
+  parser.add_argument(
+    "--inference-block-size",
+    type=int,
+    default=500_000,
+    help="Pixels per block when scoring validation during training.",
+  )
   args = parser.parse_args()
 
   training_samples_dir = Path(args.training_samples_dir)
@@ -309,10 +348,18 @@ def main():
     train_files, val_files = split_files_by_scene(selected_files, args.train_fraction, args.seed)
     print(f"[INFO] Spatial split train files: {[p.name for p in train_files]}")
     print(f"[INFO] Spatial split validation files: {[p.name for p in val_files]}")
-    training_features, training_labels = load_scene_matrices(train_files, bi, li, spatial_feature_config)
-    validation_features, validation_labels = load_scene_matrices(val_files, bi, li, spatial_feature_config)
+    training_features, training_labels = load_scene_matrices(
+      train_files, bi, li, spatial_feature_config,
+      max_pixels=args.max_training_pixels, seed=args.seed,
+    )
+    validation_features, validation_labels = load_scene_matrices(
+      val_files, bi, li, spatial_feature_config,
+      max_pixels=args.max_validation_pixels, seed=args.seed + 1,
+    )
   else:
-    features, labels = load_scene_matrices(selected_files, bi, li, spatial_feature_config)
+    features, labels = load_scene_matrices(
+      selected_files, bi, li, spatial_feature_config,
+    )
     rng = np.random.default_rng(args.seed)
     indices = rng.permutation(features.shape[0])
     training_size = max(1, min(features.shape[0] - 1, int(features.shape[0] * args.train_fraction)))
@@ -320,6 +367,13 @@ def main():
     validation_features = features[indices[training_size:]]
     training_labels = labels[indices[:training_size]]
     validation_labels = labels[indices[training_size:]]
+    del features, labels
+    training_features, training_labels = maybe_subsample_pixels(
+      training_features, training_labels, args.max_training_pixels, args.seed, "training",
+    )
+    validation_features, validation_labels = maybe_subsample_pixels(
+      validation_features, validation_labels, args.max_validation_pixels, args.seed + 1, "validation",
+    )
 
   data_mean, data_std = compute_standardization(training_features)
   class_weights = compute_class_weights(training_labels, BURNED_CLASS_INDEX)
@@ -365,6 +419,7 @@ def main():
     metric_name=args.metric,
     log_every=args.log_every,
     seed=args.seed,
+    inference_block_size=args.inference_block_size,
   )
 
 

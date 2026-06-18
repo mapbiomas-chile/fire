@@ -164,7 +164,7 @@ El walltime que pides en `sbatch` es el **máximo** que Slurm reserva; aunque el
 
 | Tarea | Default en script | Regla práctica |
 |-------|-------------------|----------------|
-| Entrenamiento campaña (7 modelos) | **1 h** (1 job secuencial) | ~6 min × 7 ≈ 42 min |
+| Entrenamiento campaña (7 modelos) | **1 h** (1 job, **64 GB**) | ~6 min × 7; subsample si >2M px train |
 | Entrenamiento un modelo | **30 min** | `run_train_fire_model_slurm.sh` |
 | Clasificación por región | **1 h 30 min** | ~10–15 min × número de años |
 | Un solo año | `run_classify_fire_model_slurm*.sh` ~30–40 min | Acotar `START_YEAR=END_YEAR` |

@@ -173,9 +173,12 @@ def load_scene_matrices(
   input_band_indices: list[int],
   label_band_index: int,
   spatial_feature_config: dict[str, Any] | None,
+  max_pixels: int | None = None,
+  seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray]:
-  feature_blocks = []
-  label_blocks = []
+  feature_blocks: list[np.ndarray] = []
+  label_blocks: list[np.ndarray] = []
+
   for image_path in files:
     features, labels = image_to_feature_matrix(
       image_path,
@@ -190,10 +193,46 @@ def load_scene_matrices(
     feature_blocks.append(features)
     label_blocks.append(labels)
 
+    if max_pixels and sum(block.shape[0] for block in feature_blocks) > max_pixels:
+      combined_features = np.concatenate(feature_blocks, axis=0)
+      combined_labels = np.concatenate(label_blocks, axis=0)
+      feature_blocks = []
+      label_blocks = []
+      combined_features, combined_labels = maybe_subsample_pixels(
+        combined_features,
+        combined_labels,
+        max_pixels,
+        seed=seed,
+        label="loaded scenes",
+      )
+      feature_blocks = [combined_features]
+      label_blocks = [combined_labels]
+
   if not feature_blocks:
     raise RuntimeError("No valid pixels found across selected sample files.")
 
-  return np.concatenate(feature_blocks, axis=0), np.concatenate(label_blocks, axis=0)
+  features = np.concatenate(feature_blocks, axis=0)
+  labels = np.concatenate(label_blocks, axis=0)
+  return maybe_subsample_pixels(features, labels, max_pixels, seed=seed, label="loaded scenes")
+
+
+def maybe_subsample_pixels(
+  features: np.ndarray,
+  labels: np.ndarray,
+  max_pixels: int | None,
+  seed: int,
+  label: str = "dataset",
+) -> tuple[np.ndarray, np.ndarray]:
+  if max_pixels is None or max_pixels <= 0 or features.shape[0] <= max_pixels:
+    return features, labels
+
+  rng = np.random.default_rng(seed)
+  idx = rng.choice(features.shape[0], max_pixels, replace=False)
+  print(
+    f"[INFO] Subsampled {label}: {features.shape[0]:,} -> {max_pixels:,} pixels "
+    f"(max_pixels cap)"
+  )
+  return features[idx], labels[idx]
 
 
 def compute_standardization(features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

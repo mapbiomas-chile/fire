@@ -4,7 +4,7 @@
 #SBATCH -p main
 #SBATCH -n 1
 #SBATCH -c 2
-#SBATCH --mem=16G
+#SBATCH --mem=64G
 #SBATCH --mail-type=FAIL
 #SBATCH -t 01:00:00
 #SBATCH -o /home/%u/logs/%x_%j.out

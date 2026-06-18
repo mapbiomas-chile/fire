@@ -32,6 +32,9 @@ TRAIN_SPATIAL_WINDOW_SIZE="${TRAIN_SPATIAL_WINDOW_SIZE:-0}"
 TRAIN_N_ITER="${TRAIN_N_ITER:-7000}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-1000}"
 TRAIN_SEED="${TRAIN_SEED:-42}"
+TRAIN_MAX_TRAINING_PIXELS="${TRAIN_MAX_TRAINING_PIXELS:-2000000}"
+TRAIN_MAX_VALIDATION_PIXELS="${TRAIN_MAX_VALIDATION_PIXELS:-500000}"
+TRAIN_INFERENCE_BLOCK_SIZE="${TRAIN_INFERENCE_BLOCK_SIZE:-500000}"
 
 mkdir -p "${MODELS_DIR}"
 
@@ -63,6 +66,14 @@ fi
 if [[ "${TRAIN_SPATIAL_WINDOW_SIZE}" -ge 3 ]]; then
   common_args+=(--spatial-window-size "${TRAIN_SPATIAL_WINDOW_SIZE}")
 fi
+
+if [[ -n "${TRAIN_MAX_TRAINING_PIXELS}" ]]; then
+  common_args+=(--max-training-pixels "${TRAIN_MAX_TRAINING_PIXELS}")
+fi
+if [[ -n "${TRAIN_MAX_VALIDATION_PIXELS}" ]]; then
+  common_args+=(--max-validation-pixels "${TRAIN_MAX_VALIDATION_PIXELS}")
+fi
+common_args+=(--inference-block-size "${TRAIN_INFERENCE_BLOCK_SIZE}")
 
 if [[ "${TRAIN_BACKEND}" == "xgboost" ]]; then
   echo "[INFO] Training backend: XGBoost"
