@@ -24,8 +24,6 @@ set -uo pipefail
 
 REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
 CLASSIFICATION_DIR="${REPO_ROOT}/classification"
-# shellcheck source=lib/bash/reprocess_policy.sh
-source "${REPO_ROOT}/lib/bash/reprocess_policy.sh"
 
 if [[ -f "${CLASSIFICATION_DIR}/cluster_paths.env" ]]; then
   # shellcheck source=/dev/null
@@ -97,12 +95,9 @@ for MOSAIC_PATH in "${MOSAIC_DIR}"/b14_chile_r*_????_cog.tif; do
   OUTPUT_FILE="${OUTPUT_DIR}/${MOSAIC_NAME%.tif}_classified.tif"
 
   if [[ -f "${OUTPUT_FILE}" ]]; then
-    if reprocess_skip_existing; then
-      echo "[SKIP] Ya existe: ${OUTPUT_FILE}"
-      processed=$((processed + 1))
-      continue
-    fi
-    reprocess_remove_file "${OUTPUT_FILE}"
+    echo "[SKIP] Ya existe: ${OUTPUT_FILE}"
+    processed=$((processed + 1))
+    continue
   fi
 
   echo "---------------------------------------------"
