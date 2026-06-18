@@ -146,6 +146,28 @@ bash filtering/run_filtering_pipeline.sh
 Sample list: `classification/training_samples_r2_matorral_v1.txt` (years 2013, 2016–2018, matorral tiles only).  
 Checkpoint: `/home/flepin/models_col1_r2_matorral/` (does not overwrite the 7-model campaign until you copy it).
 
+### Conservative retrain (A/B vs 20260618 overestimation)
+
+Address inflated burned area: no spatial window, no oversample, **fixed threshold 0.55**, IoU for checkpoint selection.
+
+```bash
+cp classification/cluster_paths.train_conservative.env.leftraru classification/cluster_paths.env
+source classification/cluster_paths.env
+bash classification/run_train_chile_campaign.sh
+# output: /home/flepin/models_col1_conservative/
+
+cp classification/cluster_paths.classify_conservative.env.leftraru classification/cluster_paths.env
+source classification/cluster_paths.env
+sbatch --export=ALL classification/run_classify_chile_slurm.sh
+# output: /home/flepin/classification_conservative/
+
+cp filtering/cluster_paths.conservative.env.leftraru filtering/cluster_paths.env
+source filtering/cluster_paths.env
+bash filtering/run_filtering_pipeline.sh
+```
+
+Compare classified/filtered layers against `classification_20260618` in QGIS before replacing production files.
+
 ### Compute notes
 
 | Task | Walltime (script default) | Partition |

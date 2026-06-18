@@ -28,6 +28,7 @@ TRAIN_SEED="${TRAIN_SEED:-42}"
 TRAIN_MAX_TRAINING_PIXELS="${TRAIN_MAX_TRAINING_PIXELS:-2000000}"
 TRAIN_MAX_VALIDATION_PIXELS="${TRAIN_MAX_VALIDATION_PIXELS:-500000}"
 TRAIN_INFERENCE_BLOCK_SIZE="${TRAIN_INFERENCE_BLOCK_SIZE:-500000}"
+TRAIN_FIXED_DECISION_THRESHOLD="${TRAIN_FIXED_DECISION_THRESHOLD:-}"
 
 if [[ -z "${TRAIN_REGION}" ]]; then
   echo "[ERROR] TRAIN_REGION is not set. For one model: export TRAIN_REGION=r1 TRAIN_VERSION=v1 ..."
@@ -47,6 +48,10 @@ if [[ -n "${TRAINING_SAMPLE_LIST}" ]]; then
 else
   echo "[INFO] Sample files: ${SAMPLE_VERSION} in filename, years ${SAMPLE_START_YEAR:-*}-${SAMPLE_END_YEAR:-*}"
 fi
+if [[ -n "${TRAIN_FIXED_DECISION_THRESHOLD}" ]]; then
+  echo "[INFO] Fixed threshold: ${TRAIN_FIXED_DECISION_THRESHOLD} (no per-region calibration)"
+fi
+echo "[INFO] Spatial window: ${TRAIN_SPATIAL_WINDOW_SIZE:-0}  oversample: ${TRAIN_OVERSAMPLE_BURNED:-0}  metric: ${TRAIN_METRIC}"
 echo "[INFO] Output: ${MODELS_DIR}/col1_${COUNTRY}_${TRAIN_VERSION}_${TRAIN_REGION}_rnn_lstm_ckpt"
 echo "---------------------------------------------"
 
@@ -98,6 +103,9 @@ else
   )
   if [[ "${TRAIN_OVERSAMPLE_BURNED:-0}" == "1" ]]; then
     train_args+=(--oversample-burned)
+  fi
+  if [[ -n "${TRAIN_FIXED_DECISION_THRESHOLD}" ]]; then
+    train_args+=(--fixed-decision-threshold "${TRAIN_FIXED_DECISION_THRESHOLD}")
   fi
   "${PYTHON}" "${REPO_ROOT}/classification/train_fire_model.py" \
     "${train_args[@]}"

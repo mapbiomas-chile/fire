@@ -67,6 +67,7 @@ def train_model(
   log_every,
   seed,
   inference_block_size=500_000,
+  fixed_decision_threshold=None,
 ):
   batch_size = int(hyperparameters["TRAINING_CONFIG"]["batch_size"])
   n_iter = int(hyperparameters["TRAINING_CONFIG"]["n_iter"])
@@ -117,13 +118,19 @@ def train_model(
           validation_features,
           block_size=inference_block_size,
         )
-        threshold, metrics = find_optimal_threshold(
-          validation_labels,
-          burned_probs,
-          metric=metric_name,
-          burned_class_index=BURNED_CLASS_INDEX,
-        )
-        y_pred = (burned_probs >= threshold).astype(np.int64)
+        if fixed_decision_threshold is not None:
+          threshold = float(fixed_decision_threshold)
+          y_pred = (burned_probs >= threshold).astype(np.int64)
+          metrics = compute_fire_metrics(validation_labels, y_pred, BURNED_CLASS_INDEX)
+          metrics["threshold"] = threshold
+        else:
+          threshold, metrics = find_optimal_threshold(
+            validation_labels,
+            burned_probs,
+            metric=metric_name,
+            burned_class_index=BURNED_CLASS_INDEX,
+          )
+          y_pred = (burned_probs >= threshold).astype(np.int64)
         argmax_metrics = compute_fire_metrics(validation_labels, y_pred, BURNED_CLASS_INDEX)
 
         print(
@@ -151,10 +158,16 @@ def train_model(
     f"at iteration {best_state['iteration']}"
   )
 
-  hyperparameters["DECISION_THRESHOLD"] = float(best_state["threshold"])
+  if fixed_decision_threshold is not None:
+    hyperparameters["DECISION_THRESHOLD"] = float(fixed_decision_threshold)
+    threshold_mode = "fixed"
+  else:
+    hyperparameters["DECISION_THRESHOLD"] = float(best_state["threshold"])
+    threshold_mode = "calibrated"
   hyperparameters["BURNED_CLASS_INDEX"] = BURNED_CLASS_INDEX
   hyperparameters["VALIDATION_METRICS"] = {
     "selection_metric": metric_name,
+    "threshold_mode": threshold_mode,
     "best_iteration": best_state["iteration"],
     "thresholded": best_state["metrics"],
     "argmax_at_best_checkpoint": best_state.get("argmax_metrics"),
@@ -163,7 +176,10 @@ def train_model(
 
   print(f"[INFO] Final model saved at: {model_path}")
   print(f"[INFO] Hyperparameters saved at: {json_path}")
-  print(f"[INFO] Calibrated decision threshold: {hyperparameters['DECISION_THRESHOLD']:.3f}")
+  if fixed_decision_threshold is not None:
+    print(f"[INFO] Fixed decision threshold: {hyperparameters['DECISION_THRESHOLD']:.3f}")
+  else:
+    print(f"[INFO] Calibrated decision threshold: {hyperparameters['DECISION_THRESHOLD']:.3f}")
 
 
 def build_hyperparameters(
@@ -212,6 +228,7 @@ def build_hyperparameters(
       "max_validation_pixels": args.max_validation_pixels,
       "seed": args.seed,
       "train_fraction": args.train_fraction,
+      "fixed_decision_threshold": args.fixed_decision_threshold,
     },
   }
 
@@ -315,6 +332,12 @@ def main():
     type=int,
     default=500_000,
     help="Pixels per block when scoring validation during training.",
+  )
+  parser.add_argument(
+    "--fixed-decision-threshold",
+    type=float,
+    default=None,
+    help="Use this burned-class probability cutoff for validation and inference (skip per-region calibration).",
   )
   args = parser.parse_args()
 
@@ -425,6 +448,9 @@ def main():
   print(f"[INFO] Class weights: {class_weights}")
   print(f"[INFO] Input features: {num_input_features}")
 
+  if args.fixed_decision_threshold is not None:
+    print(f"[INFO] Fixed decision threshold (no calibration): {args.fixed_decision_threshold:.3f}")
+
   np.random.seed(args.seed)
   tf.set_random_seed(args.seed)
   train_model(
@@ -440,6 +466,7 @@ def main():
     log_every=args.log_every,
     seed=args.seed,
     inference_block_size=args.inference_block_size,
+    fixed_decision_threshold=args.fixed_decision_threshold,
   )
 
 
