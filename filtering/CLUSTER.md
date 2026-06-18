@@ -17,8 +17,9 @@ Guía para la cola. Detalle del flujo: [README.md](README.md).
 
 ```bash
 cd ~/fire
-cp filtering/cluster_paths.ag_strict.env.leftraru filtering/cluster_paths.env
-# baseline: cp filtering/cluster_paths.env.leftraru filtering/cluster_paths.env
+cp filtering/cluster_paths.20260618.env.leftraru filtering/cluster_paths.env
+# baseline sin ag-fill: filtering/cluster_paths.env.leftraru (ajustar rutas a 20260618)
+# comparación anterior: filtering/cluster_paths.ag_strict.env.leftraru → classification_20260609
 ```
 
 **Otro entorno** — plantilla genérica:
@@ -33,10 +34,10 @@ nano filtering/cluster_paths.env
 
 ```bash
 cd ~/fire
-sbatch filtering/run_filtering_pipeline_slurm.sh
+sbatch -t 02:00:00 filtering/run_filtering_pipeline_slurm.sh
 
 # Solo filtrado (máscaras ya generadas); opcional: override rutas en la línea de comando:
-sbatch filtering/run_filtering_pipeline_slurm.sh /path/to/classified /path/to/work filter
+sbatch filtering/run_filtering_pipeline_slurm.sh /home/flepin/classification_20260618 /home/flepin/classification_20260618/filtering_work filter
 ```
 
 Logs: `~/logs/fire_class_filter_<JOBID>.out` / `.err`
