@@ -40,13 +40,48 @@ export TF_NUM_INTRAOP_THREADS="${TF_NUM_INTRAOP_THREADS:-22}"
 export TF_NUM_INTEROP_THREADS="${TF_NUM_INTEROP_THREADS:-2}"
 
 REGION="${REGION:-}"
-MODEL_VERSION="${MODEL_VERSION:-v2}"
+MODEL_VERSION="${MODEL_VERSION:-}"
+AUTO_MODEL_VERSION_BY_YEAR="${AUTO_MODEL_VERSION_BY_YEAR:-0}"
 START_YEAR="${START_YEAR:-2019}"
 END_YEAR="${END_YEAR:-2025}"
 SATELLITE="${SATELLITE:-b14}"
 COUNTRY="${COUNTRY:-chile}"
 COLLECTION_NAME="${COLLECTION_NAME:-col1}"
 BLOCK_SIZE="${BLOCK_SIZE:-40000000}"
+DECISION_THRESHOLD="${DECISION_THRESHOLD:-}"
+OPENING_FILTER_SIZE="${OPENING_FILTER_SIZE:-2}"
+CLOSING_FILTER_SIZE="${CLOSING_FILTER_SIZE:-4}"
+
+resolve_model_version() {
+  local region="$1"
+  local year="$2"
+
+  if [[ -n "${MODEL_VERSION}" && "${AUTO_MODEL_VERSION_BY_YEAR}" != "1" ]]; then
+    echo "${MODEL_VERSION}"
+    return
+  fi
+
+  # r2: v1 for 2013–2025. r1/r4/r6: v1 through 2018, v2 from 2019.
+  if [[ "${region}" == "r2" ]]; then
+    echo "v1"
+    return
+  fi
+
+  if (( year <= 2018 )); then
+    echo "v1"
+  else
+    echo "v2"
+  fi
+}
+
+model_base_for_version() {
+  local version="$1"
+  if [[ -n "${MODEL_NAME:-}" && "${AUTO_MODEL_VERSION_BY_YEAR}" != "1" ]]; then
+    echo "${MODEL_NAME}"
+    return
+  fi
+  echo "${COLLECTION_NAME}_${COUNTRY}_${version}_${REGION}_rnn_lstm_ckpt"
+}
 
 REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
 PYTHON="${PYTHON:-${HOME}/.conda/envs/mb_fuego/bin/python}"
@@ -82,21 +117,18 @@ if (( START_YEAR > END_YEAR )); then
   exit 1
 fi
 
-if [[ -n "${MODEL_NAME:-}" ]]; then
-  MODEL_BASE="${MODEL_NAME}"
-else
-  MODEL_BASE="${COLLECTION_NAME}_${COUNTRY}_${MODEL_VERSION}_${REGION}_rnn_lstm_ckpt"
-fi
-
-OUTPUT_DIR="${OUTPUT_DIR:-${HOME}/classi_v2/${REGION}_${MODEL_VERSION}}"
-MODEL_PATH="${MODEL_DIR}/${MODEL_BASE}"
+OUTPUT_DIR="${OUTPUT_DIR:-${HOME}/classi_v2/${REGION}}"
 
 echo "============================================="
 echo "CLASIFICACIÓN POR REGIÓN"
 echo "============================================="
 echo "Región:        ${REGION}"
 echo "Años:          ${START_YEAR}-${END_YEAR}"
-echo "Modelo:        ${MODEL_BASE}"
+if [[ "${AUTO_MODEL_VERSION_BY_YEAR}" == "1" || -z "${MODEL_VERSION}" ]]; then
+  echo "Modelo:        auto por año (r2→v1; r1/r4/r6→v1≤2018, v2≥2019)"
+else
+  echo "Modelo:        ${MODEL_VERSION} fijo"
+fi
 echo "Mosaicos:      ${MOSAIC_DIR}/${SATELLITE}_${COUNTRY}_${REGION}_<year>_cog.tif"
 echo "Salida:        ${OUTPUT_DIR}"
 echo "Python:        ${PYTHON}"
@@ -116,19 +148,22 @@ for required_dir in "${MOSAIC_DIR}" "${MODEL_DIR}"; do
   fi
 done
 
-for suffix in .index .meta .data-00000-of-00001; do
-  if [[ ! -e "${MODEL_PATH}${suffix}" ]]; then
-    echo "[ERROR] Checkpoint incompleto (falta ${MODEL_PATH}${suffix})"
-    exit 1
-  fi
-done
-
-if [[ ! -e "${MODEL_PATH}_hyperparameters.json" ]]; then
-  echo "[ERROR] No existe: ${MODEL_PATH}_hyperparameters.json"
-  exit 1
-fi
-
 mkdir -p "${OUTPUT_DIR}"
+
+verify_model_checkpoint() {
+  local model_path="$1"
+  for suffix in .index .meta .data-00000-of-00001; do
+    if [[ ! -e "${model_path}${suffix}" ]]; then
+      echo "[ERROR] Checkpoint incompleto (falta ${model_path}${suffix})"
+      return 1
+    fi
+  done
+  if [[ ! -e "${model_path}_hyperparameters.json" ]]; then
+    echo "[ERROR] No existe: ${model_path}_hyperparameters.json"
+    return 1
+  fi
+  return 0
+}
 
 "${PYTHON}" -c "import numpy, scipy, tensorflow.compat.v1 as tf; print('deps OK')"
 
@@ -138,9 +173,13 @@ processed=0
 for (( YEAR=START_YEAR; YEAR<=END_YEAR; YEAR++ )); do
   MOSAIC_NAME="${SATELLITE}_${COUNTRY}_${REGION}_${YEAR}_cog.tif"
   MOSAIC_PATH="${MOSAIC_DIR}/${MOSAIC_NAME}"
+  YEAR_MODEL_VERSION="$(resolve_model_version "${REGION}" "${YEAR}")"
+  MODEL_BASE="$(model_base_for_version "${YEAR_MODEL_VERSION}")"
+  MODEL_PATH="${MODEL_DIR}/${MODEL_BASE}"
 
   echo "---------------------------------------------"
   echo "Mosaico: ${MOSAIC_NAME}"
+  echo "Modelo:  ${MODEL_BASE}"
   echo "---------------------------------------------"
 
   if [[ ! -e "${MOSAIC_PATH}" ]]; then
@@ -149,11 +188,24 @@ for (( YEAR=START_YEAR; YEAR<=END_YEAR; YEAR++ )); do
     continue
   fi
 
-  "${PYTHON}" "${SCRIPT_PATH}" \
-    --model-path "${MODEL_PATH}" \
-    --mosaics "${MOSAIC_PATH}" \
-    --block-size "${BLOCK_SIZE}" \
+  if ! verify_model_checkpoint "${MODEL_PATH}"; then
+    failed=$((failed + 1))
+    continue
+  fi
+
+  classify_args=(
+    --model-path "${MODEL_PATH}"
+    --mosaics "${MOSAIC_PATH}"
+    --block-size "${BLOCK_SIZE}"
     --output-dir "${OUTPUT_DIR}"
+    --opening-filter-size "${OPENING_FILTER_SIZE}"
+    --closing-filter-size "${CLOSING_FILTER_SIZE}"
+  )
+  if [[ -n "${DECISION_THRESHOLD}" ]]; then
+    classify_args+=(--decision-threshold "${DECISION_THRESHOLD}")
+  fi
+
+  "${PYTHON}" "${SCRIPT_PATH}" "${classify_args[@]}"
 
   echo "[INFO] OK: ${MOSAIC_NAME}"
   processed=$((processed + 1))

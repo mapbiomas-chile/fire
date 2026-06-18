@@ -6,7 +6,9 @@ Training and inference scripts for the MapBiomas Chile burned-area neural networ
 
 | File | Purpose |
 | --- | --- |
-| `train_fire_model.py` | Trains the feed-forward neural network from local training-sample TIFFs. |
+| `fire_model_common.py` | Shared metrics, spatial features, model graph, and data loading helpers. |
+| `train_fire_model.py` | Trains the TensorFlow MLP from local training-sample TIFFs. |
+| `train_fire_model_xgboost.py` | Trains an XGBoost baseline on the same feature pipeline. |
 | `train_fire_model.sh` | Minimal local launcher for `train_fire_model.py`. |
 | `run_train_fire_model_slurm.sh` | Slurm job that runs training on the NLHPC `v100` partition. |
 | `classify_fire_model.py` | Runs inference on one or more mosaic TIFFs and applies morphological opening/closing. |
@@ -18,7 +20,18 @@ Training and inference scripts for the MapBiomas Chile burned-area neural networ
 
 ## Model overview
 
-The model is a fully-connected network with 5 hidden ReLU layers (`7 → 14 → 7 → 14 → 7`) and a 2-class output (burned / not burned). Input features are inferred from the training sample band descriptions: the band named `landcover` is used as the label and every other band is used as an input feature. Inputs are standardized using the training-set mean and standard deviation, which are persisted in the hyperparameters JSON so inference produces consistent results.
+The default backend is a fully-connected network with 5 hidden ReLU layers (`7 → 14 → 7 → 14 → 7`) and a 2-class output (burned / not burned). Input features are inferred from the training sample band descriptions: the band named `landcover` is used as the label and every other band is used as an input feature. Inputs are standardized using the training-set mean and standard deviation, which are persisted in the hyperparameters JSON so inference produces consistent results.
+
+On branch `feature/model_modification`, training and inference also support:
+
+- **Fire-oriented validation metrics**: IoU, F1, precision, recall on the burned class.
+- **Spatial validation split**: hold out entire sample scenes (`--validation-split by_file`, default).
+- **Class imbalance handling**: weighted loss (default), focal loss, or balanced batch oversampling.
+- **Calibrated threshold**: `DECISION_THRESHOLD` in the hyperparameters JSON, tuned on validation data.
+- **Local spatial context**: optional window mean/std on dNBR/rNBR/NBR bands (`--spatial-window-size 5`).
+- **XGBoost backend**: `train_fire_model_xgboost.py` + `MODEL_BACKEND=xgboost` in hyperparameters.
+
+Legacy checkpoints without `DECISION_THRESHOLD` still work: inference falls back to argmax.
 
 ## Training
 
@@ -28,14 +41,56 @@ The model is a fully-connected network with 5 hidden ReLU layers (`7 → 14 → 
 - Each sample TIFF must contain a band whose description is `landcover`; this is used as the label. All remaining bands are used as input features.
 - `--country`, `--version`, `--region`: string tokens that control which files are selected and how the output model is named.
 - `--models-dir`: output directory for checkpoints and the hyperparameters JSON.
-- `--seed`: random seed for shuffling and batch sampling (default `42`).
+- `--seed`: random seed (default `42`).
+- `--validation-split by_file`: spatial split by sample file (recommended).
+- `--loss weighted`: inverse-frequency class weights (default). Alternatives: `cross_entropy`, `focal`.
+- `--oversample-burned`: balanced batches when possible.
+- `--metric f1`: validation metric used to pick the best checkpoint/threshold (`iou`, `recall`, `precision`).
+- `--spatial-window-size 5`: add local mean/std features for dNBR-like bands.
 
 ### Outputs
 
-Given `--country chile --version v1 --region r2`, training writes:
+Given `--country chile --version v1 --region r2`, TensorFlow training writes:
 
 - `col1_chile_v1_r2_rnn_lstm_ckpt.*` — TensorFlow v1 checkpoint files.
-- `col1_chile_v1_r2_rnn_lstm_ckpt_hyperparameters.json` — training-set mean/std, layer sizes, learning rate and the inferred dataset schema (band indices and names).
+- `col1_chile_v1_r2_rnn_lstm_ckpt_hyperparameters.json` — mean/std, layer sizes, `DECISION_THRESHOLD`, `VALIDATION_METRICS`, dataset schema, and optional `SPATIAL_FEATURE_CONFIG`.
+
+XGBoost training writes:
+
+- `col1_chile_v1_r2_xgboost.json`
+- `col1_chile_v1_r2_xgboost_hyperparameters.json`
+
+### Recommended training command
+
+```bash
+cd classification
+python train_fire_model.py \
+  --country chile \
+  --version v1 \
+  --region r2 \
+  --training-samples-dir /path/to/training_samples \
+  --models-dir /path/to/models \
+  --validation-split by_file \
+  --loss weighted \
+  --oversample-burned \
+  --metric f1 \
+  --spatial-window-size 5
+```
+
+XGBoost benchmark:
+
+```bash
+python train_fire_model_xgboost.py \
+  --country chile \
+  --version v1 \
+  --region r2 \
+  --training-samples-dir /path/to/training_samples \
+  --models-dir /path/to/models \
+  --validation-split by_file \
+  --spatial-window-size 5
+```
+
+Install XGBoost when needed: `pip install xgboost`
 
 ### Run locally
 
@@ -43,26 +98,25 @@ Given `--country chile --version v1 --region r2`, training writes:
 ./train_fire_model.sh
 ```
 
-The launcher calls `train_fire_model.py` with `chile / v1 / r3` against `training_samples/` and writes to `models/`.
-
 ### Run on Slurm (NLHPC)
 
 ```bash
 sbatch run_train_fire_model_slurm.sh
 ```
 
-The job uses the `v100` partition and expects `~/.env` to define `MINICONDA_PATH` and `CONDA_ENV_PATH`.
-
 ## Classification
 
 ### Inputs
 
-- `--model-path`: checkpoint base path (without extension). The script also accepts `<model-path>.meta` as evidence the checkpoint exists.
-- `--hyperparameters-path`: optional, defaults to `<model-path>_hyperparameters.json`. The file must contain a `DATASET_SCHEMA` entry; models trained with the old pipeline are rejected.
+- `--model-path`: TensorFlow checkpoint base path (without extension) or XGBoost `.json` model.
+- `--hyperparameters-path`: optional, defaults to `<model-stem>_hyperparameters.json`.
 - `--mosaics`: one or more mosaic GeoTIFFs. Band order must match the input bands the model was trained on.
 - `--output-dir`: directory where classified rasters are written.
 - `--block-size`: number of pixels processed per inference block (default `40_000_000`).
-- `--opening-filter-size` / `--closing-filter-size`: morphological structuring-element sizes (default `2` and `4`; pass `0` to disable the corresponding filter).
+- `--decision-threshold`: override `DECISION_THRESHOLD` from hyperparameters JSON.
+- `--opening-filter-size` / `--closing-filter-size`: morphological structuring-element sizes (default `2` and `4`; pass `0` to disable).
+
+Inference loads the TensorFlow model **once per mosaic** (not once per block).
 
 ### Outputs
 
@@ -74,8 +128,6 @@ For each input mosaic `foo.tif`, the script writes `foo_classified.tif` into `--
 ./classify_fire_model.sh
 ```
 
-Edit the model path and mosaic path inside the script before running.
-
 ### Run on Slurm (NLHPC)
 
 **One mosaic per job:**
@@ -84,43 +136,23 @@ Edit the model path and mosaic path inside the script before running.
 sbatch run_classify_fire_model_slurm.sh <model_name> <mosaic_name>
 ```
 
-Example: `sbatch run_classify_fire_model_slurm.sh col1_chile_v2_r2_rnn_lstm_ckpt b14_chile_r2_2019_cog.tif`
-
-Edit `MODEL_PATH`, `MOSAIC_PATH`, and `--output-dir` inside the script if your paths differ from the defaults.
-
 **Region + year range (reprocessing):**
 
 ```bash
 cp classification/cluster_paths.env.example classification/cluster_paths.env
-# edit REGION, MODEL_VERSION, START_YEAR, END_YEAR, paths
 source classification/cluster_paths.env
 sbatch classification/run_classify_region_slurm.sh
 ```
 
-Or without a config file:
-
-```bash
-export REGION=r2 MODEL_VERSION=v2 START_YEAR=2019 END_YEAR=2025
-export OUTPUT_DIR="$HOME/classi_v2/r2_v2"
-sbatch classification/run_classify_region_slurm.sh
-```
-
-The job reads mosaics `b14_chile_<region>_<year>_cog.tif`, uses checkpoint `col1_chile_<version>_<region>_rnn_lstm_ckpt`, and writes `<mosaic_stem>_classified.tif` under `OUTPUT_DIR`. Override the checkpoint name with `MODEL_NAME` in `cluster_paths.env` if needed.
-
-Legacy per-region scripts (`run_classify_fire_model_slurm_r6.sh`, `run_classify_fire_model_slurm_v2.sh`) remain for older runs; prefer `run_classify_region_slurm.sh` for new reprocessing.
-
 ### Bulk submission helper
-
-`run_classify_tiles.py` holds a `region → model` dictionary and a year range, and submits one `sbatch run_classify_fire_model_slurm.sh` per `(region, year)` pair using the mosaic name template `b14_chile_<region>_<year>_cog.tif`:
 
 ```bash
 python run_classify_tiles.py
 ```
 
-Edit the `models` dictionary and the year range at the top of the file to match the campaign.
-
 ## Conventions
 
-- Checkpoint names follow `col1_<country>_<version>_<region>_rnn_lstm_ckpt`.
+- TensorFlow checkpoint names follow `col1_<country>_<version>_<region>_rnn_lstm_ckpt`.
+- XGBoost model names follow `col1_<country>_<version>_<region>_xgboost.json`.
 - Classified mosaic names follow `<mosaic_stem>_classified.tif`.
 - Training files must be TIFFs with band descriptions (one band must be named `landcover`).

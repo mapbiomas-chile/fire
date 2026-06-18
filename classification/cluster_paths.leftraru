@@ -1,20 +1,24 @@
 # =============================================================================
-# NLHPC leftraru — clasificación r2, 2019–2025, modelo v1
+# NLHPC leftraru — clasificación por región con versión de modelo automática
 #
-#   cp classification/cluster_paths.r2_v1_2019_2025.env.leftraru classification/cluster_paths.env
+# Reglas de modelo:
+#   r2:  v1 para 2013–2025
+#   r1, r4, r6: v1 para 2013–2018, v2 para 2019–2025
+#
+# Uso:
+#   cp classification/cluster_paths.leftraru classification/cluster_paths.env
+#   # editar REGION, START_YEAR, END_YEAR si hace falta
 #   source classification/cluster_paths.env
 #   sbatch classification/run_classify_region_slurm.sh
-#
-# Salida: b14_chile_r2_<year>_cog_classified.tif
 # =============================================================================
 
 export REGION=r2
-export START_YEAR=2019
+export START_YEAR=2013
 export END_YEAR=2025
 
-export MODEL_VERSION=v1
-export AUTO_MODEL_VERSION_BY_YEAR=0
-# Checkpoint: col1_chile_v1_r2_rnn_lstm_ckpt
+# Dejar MODEL_VERSION vacío y activar auto (o fijar MODEL_VERSION=v1 para forzar una versión).
+unset MODEL_VERSION
+export AUTO_MODEL_VERSION_BY_YEAR=1
 
 export MOSAIC_DIR="/home/flepin/mosaics_cog"
 export MODEL_DIR="/home/flepin/models_col1"
@@ -28,6 +32,7 @@ export COLLECTION_NAME=col1
 export PYTHON="/home/flepin/.conda/envs/mb_fuego/bin/python"
 export BLOCK_SIZE=40000000
 
-# Morphología post-clasificación (defaults classify_fire_model.py: opening 2, closing 4)
+# Opcional: override del umbral calibrado en hyperparameters JSON
+# export DECISION_THRESHOLD=0.45
 # export OPENING_FILTER_SIZE=2
 # export CLOSING_FILTER_SIZE=4
