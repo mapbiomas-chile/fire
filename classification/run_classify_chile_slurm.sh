@@ -123,4 +123,7 @@ for MOSAIC_PATH in "${MOSAIC_DIR}"/b14_chile_r*_????_cog.tif; do
 done
 
 echo "RESUMEN: ${processed} OK, ${failed} fallidos -> ${OUTPUT_DIR}"
-(( failed > 0 )) && exit 1
+if (( failed > 0 )); then
+  exit 1
+fi
+exit 0
