@@ -142,23 +142,30 @@ Comparar en QGIS:
 
 ## Clasificación serie completa 2013–2025 (modelos 20260618)
 
+**Un solo job Slurm** (igual que antes con `run_classify_fire_model_slurm_v2.sh`):
+
 ```bash
 cd ~/fire
 cp classification/cluster_paths.classify_20260618.env.leftraru classification/cluster_paths.env
 source classification/cluster_paths.env
 
-bash classification/run_classify_chile_campaign.sh --dry-run
+sbatch classification/run_classify_fire_model_slurm_v2.sh
+```
+
+O con el wrapper:
+
+```bash
 bash classification/run_classify_chile_campaign.sh
 ```
 
-- **4 jobs Slurm** (uno por región: r1, r2, r4, r6), pueden correr en paralelo
+- **1 job** `classi_fire_model`, walltime **10 h**
 - **Modelos:** `/home/flepin/models_col1_20260618`
 - **Salida:** `/home/flepin/classification_20260618`
-- **Walltime:** 3 h 30 min por región (~13 años)
+- Recorre todos los `b14_chile_r*_YYYY_cog.tif` (r1, r2, r4, r6; 2013–2025)
 
 ```bash
-squeue -u flepin
-ls /home/flepin/classification_20260618/*_classified.tif | wc -l   # meta: 52 (13×4)
+tail -f ~/logs/classi_fire_model_<JOBID>.out
+ls /home/flepin/classification_20260618/*_classified.tif | wc -l
 ```
 
 ## Clasificación (modelos existentes en producción)
