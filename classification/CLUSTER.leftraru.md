@@ -112,3 +112,21 @@ Modelos: `/home/flepin/models_col1`
 - Los archivos `*.env.leftraru` se commitean en esta rama; `cluster_paths.env` local sigue en `.gitignore`.
 - Checkpoints legacy siguen funcionando sin `DECISION_THRESHOLD`.
 - Reentrenar es **opcional**; producción puede seguir con `models_col1`.
+
+## Uso responsable del cómputo (NLHPC)
+
+El walltime que pides en `sbatch` es el **máximo** que Slurm reserva; aunque el job termine antes, cuenta contra tu cuota.
+
+| Tarea | Default en script | Regla práctica |
+|-------|-------------------|----------------|
+| Entrenamiento MLP/XGBoost | **30 min** | Suele bastar; si TIMEOUT: `sbatch -t 01:00:00 ...` |
+| Clasificación por región | **1 h 30 min** | ~10–15 min × número de años |
+| Un solo año | `run_classify_fire_model_slurm*.sh` ~30–40 min | Acotar `START_YEAR=END_YEAR` |
+
+Recomendaciones:
+
+1. **Acota años** en `cluster_paths.env` (`START_YEAR` / `END_YEAR`) en lugar de correr 2013–2025 de una vez si no hace falta.
+2. **Pide solo el tiempo necesario:** `sbatch -t HH:MM:SS script.sh`
+3. **Cancela jobs de prueba:** `scancel <JOBID>`
+4. **Entrenamiento en `main`**, no en `v100` (este MLP no usa GPU).
+5. Modelos experimentales en `models_col1_20260618`; no reentrenar si ya tienes checkpoint en `models_col1`.

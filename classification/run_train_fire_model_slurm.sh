@@ -4,13 +4,16 @@
 #SBATCH -p main
 #SBATCH -n 1
 #SBATCH -c 2
-#SBATCH --mem-per-cpu=16000
+#SBATCH --mem=16G
 #SBATCH --mail-type=FAIL
-#SBATCH -t 01:00:00
+#SBATCH -t 00:30:00
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 #
 # Entrena modelo MLP o XGBoost usando classification/cluster_paths.env
+#
+# Tiempo: 30 min suele alcanzar (MLP pequeño, CPU). Si falla por TIMEOUT:
+#   sbatch -t 01:00:00 classification/run_train_fire_model_slurm.sh
 #
 #   cp classification/cluster_paths.model_modification.env.leftraru classification/cluster_paths.env
 #   source classification/cluster_paths.env

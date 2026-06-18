@@ -6,11 +6,16 @@
 #SBATCH -c 22
 #SBATCH --mem=64GB
 #SBATCH --mail-type=FAIL
-#SBATCH -t 03:00:00
+#SBATCH -t 01:30:00
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 #
 # Clasifica mosaicos de una región y rango de años con un modelo MapBiomas Fire.
+#
+# Tiempo: regla práctica ≈ 10–15 min por año. Este default (~1.5 h) cubre ~6–8 años.
+# Ajusta al pedir el job, p. ej. 13 años (2013–2025):
+#   sbatch -t 03:30:00 classification/run_classify_region_slurm.sh
+# O acota años en cluster_paths.env (START_YEAR / END_YEAR).
 #
 # Uso típico (con archivo de configuración):
 #   cp classification/cluster_paths.env.example classification/cluster_paths.env
