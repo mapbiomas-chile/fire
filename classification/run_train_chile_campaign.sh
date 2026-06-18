@@ -2,7 +2,7 @@
 # Submit Chile training campaign as a single Slurm job (7 models, 1 hour).
 #
 #   cd ~/fire
-#   cp classification/cluster_paths.model_modification.env.leftraru classification/cluster_paths.env
+#   cp classification/cluster_paths.train.env.leftraru classification/cluster_paths.env
 #   source classification/cluster_paths.env
 #   bash classification/run_train_chile_campaign.sh --dry-run
 #   bash classification/run_train_chile_campaign.sh

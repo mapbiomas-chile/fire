@@ -1,11 +1,19 @@
 #!/bin/bash
+# Local example — edit MODEL_DIR, MOSAIC_DIR, OUTPUT_DIR before running.
 
-export OMP_NUM_THREADS=22
-export TF_NUM_INTRAOP_THREADS=22
-export TF_NUM_INTEROP_THREADS=2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${PYTHON:-python}"
 
-python /home/flepin/fire/classification/classify_fire_model.py \
-  --model-path /home/flepin/models_col1/col1_chile_v2_r6_rnn_lstm_ckpt \
-  --mosaics /home/flepin/mosaics_cog/b14_chile_r6_2019_cog.tif \
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export TF_NUM_INTRAOP_THREADS="${TF_NUM_INTRAOP_THREADS:-4}"
+export TF_NUM_INTEROP_THREADS="${TF_NUM_INTEROP_THREADS:-2}"
+
+MODEL_DIR="${MODEL_DIR:-/path/to/models}"
+MOSAIC_DIR="${MOSAIC_DIR:-/path/to/mosaics_cog}"
+OUTPUT_DIR="${OUTPUT_DIR:-/path/to/output}"
+
+"${PYTHON}" "${SCRIPT_DIR}/classify_fire_model.py" \
+  --model-path "${MODEL_DIR}/col1_chile_v1_r2_rnn_lstm_ckpt" \
+  --mosaics "${MOSAIC_DIR}/b14_chile_r2_2019_cog.tif" \
   --block-size 40000000 \
-  --output-dir /home/flepin/prueba
+  --output-dir "${OUTPUT_DIR}"

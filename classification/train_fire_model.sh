@@ -1,8 +1,17 @@
 #!/bin/bash
+# Local example — edit paths before running.
 
-python /home/ecastillo/mapbiomas/fire/classification/train_fire_model.py \
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${PYTHON:-python}"
+
+"${PYTHON}" "${SCRIPT_DIR}/train_fire_model.py" \
   --country chile \
   --version v1 \
-  --region r3 \
-  --training-samples-dir /home/ecastillo/mapbiomas/training_samples/ \
-  --models-dir /home/ecastillo/mapbiomas/models
+  --region r2 \
+  --training-samples-dir "${TRAINING_SAMPLES_DIR:-/path/to/samples}" \
+  --models-dir "${MODELS_DIR:-/path/to/models}" \
+  --validation-split by_file \
+  --loss weighted \
+  --oversample-burned \
+  --metric f1 \
+  --spatial-window-size 5

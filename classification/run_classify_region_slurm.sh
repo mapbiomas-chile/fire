@@ -4,7 +4,7 @@
 #SBATCH -p main
 #SBATCH -n 1
 #SBATCH -c 22
-#SBATCH --mem=64GB
+#SBATCH --mem=128GB
 #SBATCH --mail-type=FAIL
 #SBATCH -t 01:30:00
 #SBATCH -o /home/%u/logs/%x_%j.out
@@ -28,8 +28,8 @@
 #   export OUTPUT_DIR="$HOME/classi_v2/r2_v2"
 #   sbatch classification/run_classify_region_slurm.sh
 #
-# Un mosaico por job (alternativa):
-#   sbatch classification/run_classify_fire_model_slurm.sh \
+# Un mosaico por job (debug):
+#   sbatch classification/run_classify_single_mosaic_slurm.sh \
 #     col1_chile_v2_r2_rnn_lstm_ckpt b14_chile_r2_2019_cog.tif
 
 set -euo pipefail
@@ -66,7 +66,7 @@ END_YEAR="${END_YEAR:-2025}"
 SATELLITE="${SATELLITE:-b14}"
 COUNTRY="${COUNTRY:-chile}"
 COLLECTION_NAME="${COLLECTION_NAME:-col1}"
-BLOCK_SIZE="${BLOCK_SIZE:-40000000}"
+BLOCK_SIZE="${BLOCK_SIZE:-5000000}"
 DECISION_THRESHOLD="${DECISION_THRESHOLD:-}"
 OPENING_FILTER_SIZE="${OPENING_FILTER_SIZE:-2}"
 CLOSING_FILTER_SIZE="${CLOSING_FILTER_SIZE:-4}"
@@ -195,6 +195,13 @@ for (( YEAR=START_YEAR; YEAR<=END_YEAR; YEAR++ )); do
   YEAR_MODEL_VERSION="$(resolve_model_version "${REGION}" "${YEAR}")"
   MODEL_BASE="$(model_base_for_version "${YEAR_MODEL_VERSION}")"
   MODEL_PATH="${MODEL_DIR}/${MODEL_BASE}"
+  OUTPUT_FILE="${OUTPUT_DIR}/${MOSAIC_NAME%.tif}_classified.tif"
+
+  if [[ -f "${OUTPUT_FILE}" ]]; then
+    echo "[SKIP] Ya existe: ${OUTPUT_FILE}"
+    processed=$((processed + 1))
+    continue
+  fi
 
   echo "---------------------------------------------"
   echo "Mosaico: ${MOSAIC_NAME}"

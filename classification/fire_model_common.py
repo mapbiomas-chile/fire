@@ -85,10 +85,10 @@ def add_window_statistics(features_hw: np.ndarray, band_indices: list[int], wind
 
   extras = []
   for band_idx in band_indices:
-    band = np.nan_to_num(features_hw[:, :, band_idx], nan=0.0).astype(np.float64)
+    band = np.nan_to_num(features_hw[:, :, band_idx], nan=0.0).astype(np.float32)
     mean = ndimage.uniform_filter(band, size=window_size, mode="nearest")
     mean_sq = ndimage.uniform_filter(band * band, size=window_size, mode="nearest")
-    std = np.sqrt(np.maximum(mean_sq - mean * mean, 0.0))
+    std = np.sqrt(np.maximum(mean_sq - mean * mean, 0.0)).astype(np.float32)
     extras.extend([mean, std])
 
   if not extras:
@@ -479,6 +479,7 @@ def prepare_mosaic_feature_matrix(
   data = np.transpose(data, (1, 2, 0))
   input_band_indices = hyperparameters["DATASET_SCHEMA"]["INPUT_BAND_INDICES"]
   features_hw = data[:, :, input_band_indices].astype(np.float32)
+  del data
   spatial_feature_config = hyperparameters.get("SPATIAL_FEATURE_CONFIG")
   features_hw = augment_features_with_spatial_context(features_hw, spatial_feature_config)
 

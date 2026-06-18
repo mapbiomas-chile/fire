@@ -6,6 +6,7 @@ Local-only burned area classification pipeline (HPC-friendly).
 from __future__ import annotations
 
 import argparse
+import gc
 from pathlib import Path
 
 import numpy as np
@@ -37,7 +38,7 @@ def classify_pixels(
 
   num_pixels = data_vector.shape[0]
   num_blocks = max(1, (num_pixels + block_size - 1) // block_size)
-  output_blocks = []
+  output = np.empty(num_pixels, dtype=np.int64)
 
   tf.compat.v1.reset_default_graph()
   graph, tensors, saver = create_model_graph(hyperparameters, training=False)
@@ -52,7 +53,7 @@ def classify_pixels(
       data_block = data_vector[start_idx:end_idx]
 
       if threshold is None:
-        output_block = sess.run(
+        output[start_idx:end_idx] = sess.run(
           tensors["predicted_class"],
           feed_dict={tensors["x_input"]: data_block},
         )
@@ -61,11 +62,9 @@ def classify_pixels(
           tensors["burned_probabilities"],
           feed_dict={tensors["x_input"]: data_block},
         )
-        output_block = (probs[:, burned_class_index] >= float(threshold)).astype(np.int64)
+        output[start_idx:end_idx] = (probs[:, burned_class_index] >= float(threshold)).astype(np.int64)
 
-      output_blocks.append(output_block)
-
-  return np.concatenate(output_blocks, axis=0)
+  return output
 
 
 def classify_pixels_xgboost(data_vector, model_path, hyperparameters, decision_threshold=None):
@@ -148,7 +147,11 @@ def classify_single_mosaic(
       decision_threshold=decision_threshold,
     )
 
+  del data_classify_vector
+  gc.collect()
+
   output_image_data = output_data_classified.reshape(height, width)
+  del output_data_classified
   filtered = apply_spatial_filter(output_image_data, opening_filter_size, closing_filter_size)
 
   with rasterio.open(mosaic_path) as src:
@@ -184,7 +187,12 @@ def main() -> None:
   )
   parser.add_argument("--mosaics", nargs="+", required=True, help="Local mosaic tif path(s) to classify.")
   parser.add_argument("--output-dir", required=True, help="Local output directory for classified rasters.")
-  parser.add_argument("--block-size", type=int, default=40000000, help="Pixels per inference block (TensorFlow only).")
+  parser.add_argument(
+    "--block-size",
+    type=int,
+    default=5_000_000,
+    help="Pixels per inference block (TensorFlow only). Lower if OOM on large mosaics.",
+  )
   parser.add_argument("--opening-filter-size", type=int, default=2, help="Opening filter size. Use 0 to disable.")
   parser.add_argument("--closing-filter-size", type=int, default=4, help="Closing filter size. Use 0 to disable.")
   parser.add_argument(
