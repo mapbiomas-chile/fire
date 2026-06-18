@@ -36,6 +36,8 @@ set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
 CLASSIFICATION_DIR="${REPO_ROOT}/classification"
+# shellcheck source=lib/bash/reprocess_policy.sh
+source "${REPO_ROOT}/lib/bash/reprocess_policy.sh"
 
 # Preserve REGION/MODEL_DIR from sbatch --export before loading shared defaults.
 _SAVED_REGION="${REGION:-}"
@@ -198,9 +200,12 @@ for (( YEAR=START_YEAR; YEAR<=END_YEAR; YEAR++ )); do
   OUTPUT_FILE="${OUTPUT_DIR}/${MOSAIC_NAME%.tif}_classified.tif"
 
   if [[ -f "${OUTPUT_FILE}" ]]; then
-    echo "[SKIP] Ya existe: ${OUTPUT_FILE}"
-    processed=$((processed + 1))
-    continue
+    if reprocess_skip_existing; then
+      echo "[SKIP] Ya existe: ${OUTPUT_FILE}"
+      processed=$((processed + 1))
+      continue
+    fi
+    reprocess_remove_file "${OUTPUT_FILE}"
   fi
 
   echo "---------------------------------------------"

@@ -383,7 +383,9 @@ bash filtering/run_filtering_pipeline.sh
 | `CLASSIFIED_DIR` | Step `filter` or `temporal_first_burn` | Raw classified tiles |
 | `STEPS` | Optional (default `all`) | Steps to run |
 
-Other settings (`FROM_YEAR`, `WORKERS`, `MAX_HOLE_AREA`, `FILTER_OUTPUT_DIR`, etc.) have sensible defaults in `cluster_paths.env.example`.
+Other settings (`FROM_YEAR`, `WORKERS`, `MAX_HOLE_AREA`, `FILTER_OUTPUT_DIR`, `REPROCESS_POLICY`, etc.) have sensible defaults in `cluster_paths.env.example`.
+
+**Reprocess policy:** default `REPROCESS_POLICY=in_place` deletes filter/mask outputs in scope before regenerating. See [WORKFLOW.md](../WORKFLOW.md). Set `REPROCESS_POLICY=skip_existing` to keep existing files. Limit scope with `FILTER_NAME_CONTAINS=r2` and `STEPS=filter`.
 
 ### Pipeline steps (`STEPS`)
 

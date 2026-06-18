@@ -155,7 +155,7 @@ Checkpoint: `/home/flepin/models_col1_r2_matorral/` (does not overwrite the 7-mo
 | Classify full series | 10 h, 128 GB | `main` |
 | Classify one region | 1.5 h, 128 GB | `main` |
 
-If a job dies with `oom_kill` / `Killed` in `.err`, lower `BLOCK_SIZE` (default `5000000`) or request more memory. The Chile loop skips mosaics whose `*_classified.tif` already exists, so reruns only process missing years.
+If a job dies with `oom_kill` / `Killed` in `.err`, lower `BLOCK_SIZE` (default `5000000`) or request more memory. By default, classification **replaces** existing `*_classified.tif` for the tiles being processed (`REPROCESS_POLICY=in_place`). Use `REPROCESS_POLICY=skip_existing` to keep existing outputs and only run missing years.
 
 Cancel test jobs: `scancel <JOBID>`. Override walltime: `sbatch -t HH:MM:SS ...`.
 

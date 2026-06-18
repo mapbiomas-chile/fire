@@ -11,6 +11,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 PATHS_FILE="${SCRIPT_DIR}/cluster_paths.env"
+# shellcheck source=lib/bash/reprocess_policy.sh
+source "${REPO_ROOT}/lib/bash/reprocess_policy.sh"
 
 _preserve_STEPS="${STEPS:-}"
 
@@ -82,6 +84,51 @@ DEFAULT_STEPS="masks_accumulated,masks_yearly,masks_total,filter"
 CONFIG_HINT="Set variables in ${PATHS_FILE} (copy from cluster_paths.env.example) or export them before running."
 
 log() { echo "[$(date -Iseconds)] $*"; }
+
+classified_input_matches_scope() {
+  local name="$1"
+  local year
+  if [[ -n "${FILTER_NAME_CONTAINS}" && "${name}" != *"${FILTER_NAME_CONTAINS}"* ]]; then
+    return 1
+  fi
+  year="$(echo "${name}" | grep -oE '(201[3-9]|202[0-5])' | head -n 1)"
+  [[ -n "${year}" ]] || return 1
+  (( year >= FROM_YEAR && year <= TO_YEAR ))
+}
+
+cleanup_masks_for_scope() {
+  if reprocess_skip_existing; then
+    log "REPROCESS_POLICY=skip_existing — keeping existing masks"
+    return
+  fi
+  local y
+  log "Reprocess: removing masks for years ${FROM_YEAR}-${TO_YEAR}"
+  for (( y=FROM_YEAR; y<=TO_YEAR; y++ )); do
+    reprocess_remove_file "${TOTAL_MASKS_DIR}/mascara_total_${y}.tif"
+    reprocess_remove_glob "${YEARLY_MASKS_DIR}/mascara_*_${y}.tif"
+  done
+}
+
+cleanup_filter_chain_for_scope() {
+  if reprocess_skip_existing; then
+    log "REPROCESS_POLICY=skip_existing — keeping existing filter outputs"
+    return
+  fi
+  local input name stem
+  log "Reprocess: removing filter outputs for inputs in ${CLASSIFIED_DIR}"
+  shopt -s nullglob
+  for input in "${CLASSIFIED_DIR}"/*.tif; do
+    [[ -f "${input}" ]] || continue
+    name="$(basename "${input}")"
+    classified_input_matches_scope "${name}" || continue
+    stem="${name%.tif}"
+    reprocess_remove_glob "${FILTER_OUTPUT_DIR}/${stem}_filtered_*.tif"
+    reprocess_remove_glob "${TEMPORAL_INTERMEDIATE_DIR}/${stem}*.tif"
+    reprocess_remove_glob "${FILL_INTERMEDIATE_DIR}/${stem}*.tif"
+    reprocess_remove_glob "${LULC_INTERMEDIATE_DIR}/${stem}*.tif"
+  done
+  shopt -u nullglob
+}
 
 require_var() {
   local name="$1"
@@ -337,6 +384,10 @@ if steps_need_masks; then
   fi
 fi
 
+if steps_need_masks && { step_enabled "masks_accumulated" || step_enabled "masks_yearly" || step_enabled "masks_total"; }; then
+  cleanup_masks_for_scope
+fi
+
 if step_enabled "masks_accumulated"; then
   log "=== Step 1a: accumulated class masks ==="
   run_py filtering/create_accumulated_class_masks.py \
@@ -399,6 +450,11 @@ if step_enabled "masks_total"; then
     --from-year "${FROM_YEAR}" \
     --to-year "${TO_YEAR}" \
     --workers "${WORKERS}"
+fi
+
+if step_enabled "filter" || step_enabled "temporal_first_burn" || step_enabled "fill_holes" \
+  || step_enabled "lulc_filter" || step_enabled "min_patch_sieve" || step_enabled "fill_agricultural_holes"; then
+  cleanup_filter_chain_for_scope
 fi
 
 if step_enabled "filter"; then

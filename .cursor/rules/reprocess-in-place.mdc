@@ -1,0 +1,15 @@
+---
+description: Default in-place reprocessing — delete outputs before rerun unless user asks for a new directory
+alwaysApply: true
+---
+
+# Reprocess in place (MapBiomas Fire)
+
+Unless the user **explicitly** asks for a new output directory or dated folder:
+
+1. **Reuse** the canonical paths (`classification_20260618`, its `filtering_work/`, `models_col1_20260618`, etc.).
+2. **Before re-running**, delete only the artifacts that will be regenerated (same region/year/tile), not unrelated regions or years.
+3. **Do not** create parallel folders like `classification_r2_matorral` or `*_20260620` without the user requesting it.
+4. Scripts default to `REPROCESS_POLICY=in_place` (remove then regenerate). Use `REPROCESS_POLICY=skip_existing` only when the user wants to keep existing outputs and fill gaps.
+
+When proposing cluster commands, include the delete/move step or rely on updated pipeline scripts that do it automatically.
