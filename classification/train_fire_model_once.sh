@@ -6,14 +6,6 @@ set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
 CLASSIFICATION_DIR="${REPO_ROOT}/classification"
-
-if [[ -f "${CLASSIFICATION_DIR}/cluster_paths.env" ]]; then
-  # shellcheck source=/dev/null
-  source "${CLASSIFICATION_DIR}/cluster_paths.env"
-fi
-
-REPO_ROOT="${REPO_ROOT:-${HOME}/fire}"
-CLASSIFICATION_DIR="${REPO_ROOT}/classification"
 PYTHON="${PYTHON:-${HOME}/.conda/envs/mb_fuego/bin/python}"
 
 COUNTRY="${COUNTRY:-chile}"
@@ -35,6 +27,15 @@ TRAIN_SEED="${TRAIN_SEED:-42}"
 TRAIN_MAX_TRAINING_PIXELS="${TRAIN_MAX_TRAINING_PIXELS:-2000000}"
 TRAIN_MAX_VALIDATION_PIXELS="${TRAIN_MAX_VALIDATION_PIXELS:-500000}"
 TRAIN_INFERENCE_BLOCK_SIZE="${TRAIN_INFERENCE_BLOCK_SIZE:-500000}"
+
+if [[ -z "${TRAIN_REGION}" ]]; then
+  echo "[ERROR] TRAIN_REGION is not set. For one model: export TRAIN_REGION=r1 TRAIN_VERSION=v1 ..."
+  exit 1
+fi
+if [[ -z "${TRAIN_VERSION}" ]]; then
+  echo "[ERROR] TRAIN_VERSION is not set."
+  exit 1
+fi
 
 mkdir -p "${MODELS_DIR}"
 
