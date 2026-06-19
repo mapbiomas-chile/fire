@@ -25,7 +25,7 @@ source vectorize/cluster_paths.env
 bash vectorize/run_vectorize_pipeline.sh
 ```
 
-On NLHPC: `sbatch vectorize/run_vectorize_pipeline_slurm.sh`
+On NLHPC login node: `bash vectorize/run_vectorize_pipeline.sh` (see [vectorize/LOCAL.md](../vectorize/LOCAL.md))
 
 Full docs: [vectorize/README.md](../vectorize/README.md).
 

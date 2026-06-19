@@ -320,15 +320,15 @@ Flujo sin corte previo (solo percentil sobre todos los polígonos): dejar `POLYG
 **Important:** this filter runs on **vectors** (hectares), after polygonize. It does not replace raster filters (temporal, LULC, hole fill).
 
 ```bash
-# Env producción 20260619 (vectorize + polygon area)
+# Env producción 20260619 (vectorize + polygon area) — nodo login
 cp vectorize/cluster_paths.20260619.env.leftraru vectorize/cluster_paths.env
 cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
 source vectorize/cluster_paths.env
 
-# Opción A: pipeline orquestado
-sbatch vectorize/run_vectorize_pipeline_slurm.sh
+# Opción A: pasos separados (login)
+bash vectorize/run_vectorize_pipeline.sh
 bash filtering/run_polygon_area_pipeline.sh
-sbatch vectorize/run_vectorize_national_pipeline_slurm.sh
+bash vectorize/run_vectorize_national_pipeline.sh   # opcional
 
 # Opción B: todo en secuencia (login)
 bash vectorize/run_post_filter_pipeline.sh

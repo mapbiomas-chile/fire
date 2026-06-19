@@ -23,27 +23,21 @@ Core Python functions live in [`../lib/`](../lib/README.md). This folder is only
 
 ## Per-tile vectorization (default)
 
-## Quick start (leftraru)
+## Quick start (leftraru — nodo login)
 
 ```bash
 cd ~/fire
 
-cp vectorize/cluster_paths.env.example vectorize/cluster_paths.env
-nano vectorize/cluster_paths.env    # PYTHON, WORK_ROOT
-
+cp vectorize/cluster_paths.20260619.env.leftraru vectorize/cluster_paths.env
+cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
 source vectorize/cluster_paths.env
+
+conda activate mb_fuego
 bash vectorize/run_vectorize_pipeline.sh
 ```
 
-With SLURM:
-
-```bash
-cd ~/fire
-mkdir -p ~/logs
-sbatch vectorize/run_vectorize_pipeline_slurm.sh
-```
-
-See [CLUSTER.md](CLUSTER.md) for NLHPC details.
+Guía interactiva: [LOCAL.md](LOCAL.md).  
+SLURM (opcional): [CLUSTER.md](CLUSTER.md).
 
 ---
 
@@ -60,11 +54,7 @@ source vectorize/cluster_paths.env
 bash vectorize/run_vectorize_national_pipeline.sh
 ```
 
-SLURM:
-
-```bash
-sbatch vectorize/run_vectorize_national_pipeline_slurm.sh
-```
+SLURM (opcional): `sbatch vectorize/run_vectorize_national_pipeline_slurm.sh`
 
 ### Output layout
 

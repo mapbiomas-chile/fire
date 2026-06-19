@@ -156,24 +156,23 @@ source filtering/cluster_paths.env
 bash filtering/run_filtering_pipeline.sh
 ```
 
-Vectorize:
+Vectorize (nodo login):
 
 ```bash
 cp vectorize/cluster_paths.20260619.env.leftraru vectorize/cluster_paths.env
 cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
 source vectorize/cluster_paths.env
 
-# 1) Polygonize per-tile (sin sieve raster → calibrar umbral vectorial)
-sbatch vectorize/run_vectorize_pipeline_slurm.sh
+# 1) Polygonize per-tile
+bash vectorize/run_vectorize_pipeline.sh
 
-# 2) Filtro de área en polígonos: histogramas → umbrales → P25 por región×año
+# 2) Filtro de área: >= 20 ha → histogramas → umbrales → p25
 bash filtering/run_polygon_area_pipeline.sh
-# o: sbatch filtering/run_polygon_area_pipeline_slurm.sh
 
-# 3) Vectorización nacional: merge anual + sieve 112 px + agrupación 200 m
-sbatch vectorize/run_vectorize_national_pipeline_slurm.sh
+# 3) Vectorización nacional (opcional)
+bash vectorize/run_vectorize_national_pipeline.sh
 
-# O los tres pasos en secuencia (login):
+# O los tres pasos en secuencia:
 bash vectorize/run_post_filter_pipeline.sh
 ```
 
