@@ -19,11 +19,14 @@ Editar al menos:
 | `CLASSIFIED_DIR` | Carpeta con clasificados en bruto |
 | `WORK_ROOT` | Carpeta donde quieres las salidas |
 
-Ejemplo:
+Ejemplo (leftraru — producción 20260619):
 
 ```bash
-export CLASSIFIED_DIR="/home/flepin/classification_20260602"
-export WORK_ROOT="/home/flepin/classification_20260602/filtering_work"
+cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
+source filtering/cluster_paths.env
+# o exportar manualmente:
+export CLASSIFIED_DIR="/home/flepin/classification_20260619"
+export WORK_ROOT="/home/flepin/classification_20260619/filtering_work"
 export STEPS="all"
 ```
 

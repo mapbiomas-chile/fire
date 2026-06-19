@@ -32,8 +32,9 @@ Training and inference for the MapBiomas Chile burned-area model. Reads rasters 
 | `train_fire_model_once.sh` | Shared training logic used by Slurm scripts. |
 | `train_fire_model.sh` / `classify_fire_model.sh` | Local examples (edit paths before use). |
 | `cluster_paths.env.example` | Generic path template. |
-| `cluster_paths.train.env.leftraru` | leftraru training paths (committed). |
-| `cluster_paths.classify.env.leftraru` | leftraru classification paths (committed). |
+| `cluster_paths.20260619.env.leftraru` | **Production** — unified train + classify + filter paths for leftraru. |
+| `cluster_paths.train.env.leftraru` | Training-only shortcut (→ `models_col1_20260619`). |
+| `cluster_paths.classify.env.leftraru` | Classify-only shortcut (→ `classification_20260619`). |
 
 Copy a `*.env.leftraru` to `cluster_paths.env` (gitignored) before submitting jobs.
 
@@ -80,7 +81,7 @@ python train_fire_model.py \
 
 ```bash
 cd ~/fire
-git fetch origin && git checkout feature/model_modification && git pull
+git fetch origin && git checkout main && git pull
 ```
 
 ### Training campaign (7 models, 1 job)
@@ -122,29 +123,6 @@ export AUTO_MODEL_VERSION_BY_YEAR=1
 source classification/cluster_paths.env
 sbatch --export=ALL classification/run_classify_region_slurm.sh
 ```
-
-For legacy production models, set `MODEL_DIR=/home/flepin/models_col1` and `OUTPUT_DIR=/home/flepin/classification_20260616` in `cluster_paths.env`.
-
-### r2 isolated — matorral-only training (8 samples)
-
-Train `col1_chile_v1_r2_rnn_lstm_ckpt` from an explicit sample list, then classify **r2 only** (2013–2025):
-
-```bash
-cp classification/cluster_paths.train_r2_matorral.env.leftraru classification/cluster_paths.env
-source classification/cluster_paths.env
-bash classification/run_train_r2_matorral.sh
-
-cp classification/cluster_paths.classify_r2_matorral.env.leftraru classification/cluster_paths.env
-source classification/cluster_paths.env
-sbatch --export=ALL classification/run_classify_chile_slurm.sh
-
-cp filtering/cluster_paths.r2_matorral.env.leftraru filtering/cluster_paths.env
-source filtering/cluster_paths.env
-bash filtering/run_filtering_pipeline.sh
-```
-
-Sample list: `classification/training_samples_r2_matorral_v1.txt` (years 2013, 2016–2018, matorral tiles only).  
-Checkpoint: `/home/flepin/models_col1_r2_matorral/` (does not overwrite the 7-model campaign until you copy it).
 
 ### Production 20260619 (conservative model)
 

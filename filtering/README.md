@@ -164,9 +164,8 @@ python filtering/filter_temporal_first_burn_year.py \
 | Context | Default | Meaning |
 |---------|---------|---------|
 | **Main pipeline** (`run_filtering_pipeline.sh`) | `0` | Fill **all** enclosed holes (`MAX_HOLE_AREA=0`) |
-| **Standalone refine pilot** (`run_refine_closing_pipeline.sh`) | `16` | Fill only small holes ≤ 16 px; gentler re-run on existing folders |
 
-Override via `MAX_HOLE_AREA` in `filtering/cluster_paths.env` or `cluster_paths.refine_closing.env`.
+Override via `MAX_HOLE_AREA` in `filtering/cluster_paths.env`.
 
 ```bash
 python filtering/refine_burn_mask_closing.py \
@@ -273,16 +272,6 @@ python filtering/run_classified_filters.py \
 | `--name-contains 141228` | Limit temporal/fill steps to matching filenames |
 
 ---
-
-## Standalone refine pilot (legacy)
-
-`run_refine_closing_pipeline.sh` remains for re-running hole fill / closing on an **existing** folder without the full pipeline. Production flow uses step 3 above.
-
-| File | Role |
-|------|------|
-| `run_refine_closing_pipeline.sh` | Standalone orchestration |
-| `run_refine_closing_pipeline_slurm.sh` | SLURM wrapper |
-| `cluster_paths.refine_closing.env.example` | Path template |
 
 **Note:** `fill_holes` does not fill narrow gaps that connect to the background (not fully enclosed). Use `--method both` with a small closing kernel if needed.
 
@@ -518,7 +507,7 @@ Typical environment: Conda `mb_fuego` (or another env; set path in `PYTHON`).
 | `filter_polygons_by_threshold.py` | § 5 |
 | `run_filtering_pipeline.sh` | Pipeline |
 | `run_filtering_pipeline_slurm.sh` | Pipeline (SLURM) |
-| `run_refine_closing_pipeline.sh` | Closing pilot pipeline |
-| `run_refine_closing_pipeline_slurm.sh` | Closing pilot (SLURM) |
-| `cluster_paths.env.example` | LULC+temporal config |
-| `cluster_paths.refine_closing.env.example` | Closing pilot config |
+| `run_polygon_area_pipeline.sh` | Polygon area filter (§ 5) |
+| `run_polygon_area_pipeline_slurm.sh` | Polygon area filter (SLURM) |
+| `cluster_paths.env.example` | LULC+temporal config template |
+| `cluster_paths.20260619.env.leftraru` | Production paths — leftraru |

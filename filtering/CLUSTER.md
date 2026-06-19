@@ -13,13 +13,12 @@ Guía para la cola. Detalle del flujo: [README.md](README.md).
 
 ## Configuración
 
-**NLHPC leftraru** (rutas del cluster, en la rama de trabajo):
+**NLHPC leftraru — producción (classification_20260619):**
 
 ```bash
 cd ~/fire
-cp filtering/cluster_paths.20260618.env.leftraru filtering/cluster_paths.env
-# baseline sin ag-fill: filtering/cluster_paths.env.leftraru (ajustar rutas a 20260618)
-# comparación anterior: filtering/cluster_paths.ag_strict.env.leftraru → classification_20260609
+cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
+source filtering/cluster_paths.env
 ```
 
 **Otro entorno** — plantilla genérica:
@@ -34,10 +33,12 @@ nano filtering/cluster_paths.env
 
 ```bash
 cd ~/fire
-sbatch -t 02:00:00 filtering/run_filtering_pipeline_slurm.sh
+sbatch filtering/run_filtering_pipeline_slurm.sh
 
-# Solo filtrado (máscaras ya generadas); opcional: override rutas en la línea de comando:
-sbatch filtering/run_filtering_pipeline_slurm.sh /home/flepin/classification_20260618 /home/flepin/classification_20260618/filtering_work filter
+# Solo filtrado (máscaras ya generadas):
+sbatch filtering/run_filtering_pipeline_slurm.sh \
+  /home/flepin/classification_20260619 \
+  /home/flepin/classification_20260619/filtering_work filter
 ```
 
 Logs: `~/logs/fire_class_filter_<JOBID>.out` / `.err`
@@ -53,5 +54,5 @@ Logs: `~/logs/fire_class_filter_<JOBID>.out` / `.err`
 
 `STEPS=all` ejecuta los cuatro.
 
-**Siguiente paso (vectorización):** pipeline auxiliar en [`../vectorize/CLUSTER.md`](../vectorize/CLUSTER.md).  
-Histogramas y umbral de polígonos: [README.md](README.md) § 5.
+**Siguiente paso (vectorización + filtro de área):** [`../vectorize/CLUSTER.md`](../vectorize/CLUSTER.md).  
+Histogramas, umbrales y filtro de polígonos: [README.md](README.md) § 5.
