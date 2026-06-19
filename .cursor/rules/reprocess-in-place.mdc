@@ -5,6 +5,7 @@ alwaysApply: true
 
 # File layout (MapBiomas Fire)
 
-- Canonical Chile outputs: `classification_20260618` and `classification_20260618/filtering_work/`.
+- Canonical Chile outputs: `classification_20260619` and `classification_20260619/filtering_work/`.
+- Previous campaign (reference only): `classification_20260618`.
 - The user reorganizes and deletes files on leftraru manually. Do not add automatic delete/move logic to scripts unless they ask.
 - Do not create parallel dated folders unless the user explicitly requests a new directory.

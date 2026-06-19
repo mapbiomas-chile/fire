@@ -34,7 +34,7 @@ echo "============================================="
 echo "CHILE TRAINING CAMPAIGN"
 echo "  Mode:        single Slurm job (1 h walltime)"
 echo "  Samples:     ${TRAINING_SAMPLES_DIR:-${HOME}/samples_col1}"
-echo "  Output:      ${MODELS_DIR:-${HOME}/models_col1_20260618}"
+echo "  Output:      ${MODELS_DIR:-${HOME}/models_col1_20260619}"
 echo "  Models:      ${#JOBS[@]}"
 echo "============================================="
 

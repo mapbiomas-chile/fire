@@ -94,7 +94,7 @@ bash classification/run_train_chile_campaign.sh
 # tail -f ~/logs/train_chile_campaign_<JOBID>.out
 ```
 
-Output: `/home/flepin/models_col1_20260618/col1_chile_<version>_<region>_rnn_lstm_ckpt*`
+Output: `/home/flepin/models_col1_20260619/col1_chile_<version>_<region>_rnn_lstm_ckpt*`
 
 ### Train one model
 
@@ -110,7 +110,7 @@ cp classification/cluster_paths.classify.env.leftraru classification/cluster_pat
 source classification/cluster_paths.env
 sbatch --export=ALL classification/run_classify_chile_slurm.sh
 # tail -f ~/logs/classi_chile_<JOBID>.out
-# ls /home/flepin/classification_20260618/*_classified.tif | wc -l   # expect ~52
+# ls /home/flepin/classification_20260619/*_classified.tif | wc -l   # expect ~52
 ```
 
 ### Classify one region (partial rerun or A/B)
@@ -146,27 +146,106 @@ bash filtering/run_filtering_pipeline.sh
 Sample list: `classification/training_samples_r2_matorral_v1.txt` (years 2013, 2016–2018, matorral tiles only).  
 Checkpoint: `/home/flepin/models_col1_r2_matorral/` (does not overwrite the 7-model campaign until you copy it).
 
+### Production 20260619 (conservative model)
+
+Current production uses the conservative recipe (no spatial window, no oversample, fixed threshold **0.55**, IoU checkpoint). Paths: `models_col1_20260619` and `classification_20260619`.
+
+**Copy from the A/B run** on leftraru (`*_conservative` → `*_20260619`):
+
+```bash
+mkdir -p /home/flepin/classification_20260619
+cp -a /home/flepin/models_col1_conservative/. /home/flepin/models_col1_20260619/
+cp /home/flepin/classification_conservative/*_classified.tif /home/flepin/classification_20260619/
+cp -a /home/flepin/classification_conservative/filtering_work /home/flepin/classification_20260619/
+
+ls /home/flepin/models_col1_20260619/*_hyperparameters.json | wc -l          # ~7
+ls /home/flepin/classification_20260619/*_classified.tif | wc -l             # ~52
+ls /home/flepin/classification_20260619/filtering_work/classified_filtered/*.tif | wc -l  # ~52
+```
+
+**Env (train + classify + filter):**
+
+```bash
+cp classification/cluster_paths.20260619.env.leftraru classification/cluster_paths.env
+source classification/cluster_paths.env
+```
+
+Filtering only:
+
+```bash
+cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
+source filtering/cluster_paths.env
+bash filtering/run_filtering_pipeline.sh
+```
+
+Vectorize:
+
+```bash
+cp vectorize/cluster_paths.20260619.env.leftraru vectorize/cluster_paths.env
+cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
+source vectorize/cluster_paths.env
+
+# 1) Polygonize per-tile (sin sieve raster → calibrar umbral vectorial)
+sbatch vectorize/run_vectorize_pipeline_slurm.sh
+
+# 2) Filtro de área en polígonos: histogramas → umbrales → P25 por región×año
+bash filtering/run_polygon_area_pipeline.sh
+# o: sbatch filtering/run_polygon_area_pipeline_slurm.sh
+
+# 3) Vectorización nacional: merge anual + sieve 112 px + agrupación 200 m
+sbatch vectorize/run_vectorize_national_pipeline_slurm.sh
+
+# O los tres pasos en secuencia (login):
+bash vectorize/run_post_filter_pipeline.sh
+```
+
+**Criterios en evaluación (20260619):**
+
+| Paso | Qué hace |
+|------|----------|
+| 1. Vectorize | Polígonos por tesela (`VECTORIZE_SKIP_SIEVE=1`) |
+| 2. Pre-filtro | **≥ 20 ha** fijo (`POLYGON_PRE_FILTER_HA=20`) |
+| 3. Histogramas | Sobre polígonos ya ≥ 20 ha |
+| 4. Recommend | Calcula **p5, p10, p25 y elbow** por región×año |
+| 5. Filter | Aplica **una** regla (default `p25`; comparar sin recalcular umbrales) |
+
+```bash
+# Comparar p5 / p10 / p25 / elbow (mismo JSON de umbrales):
+for r in p5 p10 p25 elbow; do
+  POLYGON_THRESHOLD_RULE=$r \
+  POLYGON_FILTERED_GPKG="${WORK_ROOT}/polygons_filtered_min20ha_${r}.gpkg" \
+  POLYGON_FILTERED_DIR="${WORK_ROOT}/polygons_filtered_min20ha_${r}" \
+  STEPS=filter bash filtering/run_polygon_area_pipeline.sh
+done
+```
+
+| Otro | Parámetro | Valor |
+|------|-----------|-------|
+| Raster filter | `SKIP_MIN_PATCH_SIEVE` | `1` |
+| Nacional | sieve + fragmentos | `112` px (~1 ha) |
+| Nacional | agrupación | `200` m |
+
+Salidas: `polygons_min20ha/`, `histogramas_area_min20ha/`, `thresholds_area_min20ha/`, `polygons_filtered_min20ha_<regla>.gpkg`.
+
 ### Conservative retrain (A/B vs 20260618 overestimation)
 
-Address inflated burned area: no spatial window, no oversample, **fixed threshold 0.55**, IoU for checkpoint selection.
+Same recipe as production 20260619, but outputs go to `models_col1_conservative` / `classification_conservative` for comparison:
 
 ```bash
 cp classification/cluster_paths.train_conservative.env.leftraru classification/cluster_paths.env
 source classification/cluster_paths.env
 bash classification/run_train_chile_campaign.sh
-# output: /home/flepin/models_col1_conservative/
 
 cp classification/cluster_paths.classify_conservative.env.leftraru classification/cluster_paths.env
 source classification/cluster_paths.env
 sbatch --export=ALL classification/run_classify_chile_slurm.sh
-# output: /home/flepin/classification_conservative/
 
 cp filtering/cluster_paths.conservative.env.leftraru filtering/cluster_paths.env
 source filtering/cluster_paths.env
 bash filtering/run_filtering_pipeline.sh
 ```
 
-Compare classified/filtered layers against `classification_20260618` in QGIS before replacing production files.
+Compare against `classification_20260618` in QGIS; copy to `classification_20260619` when satisfied (see above).
 
 ### Compute notes
 

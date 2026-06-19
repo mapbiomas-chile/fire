@@ -49,7 +49,7 @@ declare -a JOBS=(
 echo "============================================="
 echo "CHILE TRAINING CAMPAIGN (single job)"
 echo "  Samples: ${TRAINING_SAMPLES_DIR:-${HOME}/samples_col1}"
-echo "  Output:  ${MODELS_DIR:-${HOME}/models_col1_20260618}"
+echo "  Output:  ${MODELS_DIR:-${HOME}/models_col1_20260619}"
 echo "  Models:  ${#JOBS[@]}"
 echo "============================================="
 

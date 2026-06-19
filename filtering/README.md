@@ -294,18 +294,31 @@ python filtering/run_classified_filters.py \
 
 | Step | Script | Purpose |
 |------|--------|---------|
-| Polygonize | [`vectorize/run_vectorize_pipeline.sh`](../vectorize/README.md) | One GPKG per tile (no area sieve by default) |
+| Polygonize | [`vectorize/run_vectorize_pipeline.sh`](../vectorize/README.md) | One GPKG per tile |
 | Histograms | `summarize_histograms_by_region.py` | **Visual** area distributions (PNG per region/year) |
 | Recommend threshold | `recommend_polygon_area_thresholds.py` | **Numeric** thresholds from the same polygons (JSON + CSV) |
 | Filter | `filter_polygons_by_threshold.py` | Keep polygons ≥ threshold (ha) |
+| **Orchestration** | `run_polygon_area_pipeline.sh` | Runs histograms → recommend → filter from `cluster_paths.env` |
+| **Full post-filter** | [`vectorize/run_post_filter_pipeline.sh`](../vectorize/run_post_filter_pipeline.sh) | vectorize + polygon area + national (STEPS) |
 
 ### How to choose a minimum area
 
-1. **Polygonize** per-tile outputs (`WORK_ROOT/polygons/*.gpkg`).
-2. **Plot** histograms to see the shape of the distribution (many tiny polygons vs few large ones).
-3. **Compute** recommended cutoffs (P5, P10, elbow, …) with `recommend_polygon_area_thresholds.py`.
-4. **Review** `thresholds_by_region_year.csv` (one row per region×year) or `thresholds_by_region.csv` (series pooled).
-5. **Apply** with `filter_polygons_by_threshold.py` (`--per-region-year` recommended when error varies by year).
+**Evaluación actual (20260619):** dos pasos en cascada:
+
+1. **Corte fijo ≥ 20 ha** — elimina eventos pequeños (`POLYGON_PRE_FILTER_HA=20`).
+2. Sobre lo que queda: **histogramas** → **recommend** (calcula p5, p10, p25, elbow) → **filter** (aplica una regla).
+
+```text
+polygons/  →  >= 20 ha  →  polygons_min20ha/
+                              →  histogramas + umbrales (p5/p10/p25/elbow)
+                              →  polygons_filtered_min20ha_<regla>.gpkg
+```
+
+`recommend_polygon_area_thresholds.py` **siempre calcula las cuatro reglas** en el JSON; `filter_polygons_by_threshold.py` aplica **solo una** por corrida (`--threshold-rule p5|p10|p25|elbow`).
+
+Flujo sin corte previo (solo percentil sobre todos los polígonos): dejar `POLYGON_PRE_FILTER_HA` vacío.
+
+### Reglas percentiles (paso 2)
 
 | Rule | Meaning | Typical use |
 |------|---------|-------------|
@@ -318,7 +331,20 @@ python filtering/run_classified_filters.py \
 **Important:** this filter runs on **vectors** (hectares), after polygonize. It does not replace raster filters (temporal, LULC, hole fill).
 
 ```bash
-# 1) Polygonize (disable national 112-px sieve if you only want histogram-based filtering)
+# Env producción 20260619 (vectorize + polygon area)
+cp vectorize/cluster_paths.20260619.env.leftraru vectorize/cluster_paths.env
+cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
+source vectorize/cluster_paths.env
+
+# Opción A: pipeline orquestado
+sbatch vectorize/run_vectorize_pipeline_slurm.sh
+bash filtering/run_polygon_area_pipeline.sh
+sbatch vectorize/run_vectorize_national_pipeline_slurm.sh
+
+# Opción B: todo en secuencia (login)
+bash vectorize/run_post_filter_pipeline.sh
+
+# Opción C: pasos manuales (mismo criterio)
 export VECTORIZE_SKIP_SIEVE=1
 bash vectorize/run_vectorize_pipeline.sh
 
