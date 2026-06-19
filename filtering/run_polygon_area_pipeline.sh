@@ -25,6 +25,10 @@ REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 PATHS_FILE="${FILTERING_PATHS_FILE:-${SCRIPT_DIR}/cluster_paths.env}"
 
 _preserve_STEPS="${STEPS:-}"
+_preserve_WORK_ROOT="${WORK_ROOT:-}"
+_preserve_POLYGON_THRESHOLD_RULE="${POLYGON_THRESHOLD_RULE:-}"
+_preserve_POLYGON_FILTERED_GPKG="${POLYGON_FILTERED_GPKG:-}"
+_preserve_POLYGON_FILTERED_DIR="${POLYGON_FILTERED_DIR:-}"
 
 if [[ -f "${PATHS_FILE}" ]]; then
   # shellcheck source=/dev/null
@@ -32,6 +36,10 @@ if [[ -f "${PATHS_FILE}" ]]; then
 fi
 
 [[ -n "${_preserve_STEPS}" ]] && STEPS="${_preserve_STEPS}"
+[[ -n "${_preserve_WORK_ROOT}" ]] && WORK_ROOT="${_preserve_WORK_ROOT}"
+[[ -n "${_preserve_POLYGON_THRESHOLD_RULE}" ]] && POLYGON_THRESHOLD_RULE="${_preserve_POLYGON_THRESHOLD_RULE}"
+[[ -n "${_preserve_POLYGON_FILTERED_GPKG}" ]] && POLYGON_FILTERED_GPKG="${_preserve_POLYGON_FILTERED_GPKG}"
+[[ -n "${_preserve_POLYGON_FILTERED_DIR}" ]] && POLYGON_FILTERED_DIR="${_preserve_POLYGON_FILTERED_DIR}"
 
 PYTHON="${PYTHON:-}"
 if [[ -z "${PYTHON}" ]]; then
