@@ -240,6 +240,16 @@ def mask_one_tile(
     }
 
 
+def _mask_one_tile_task(task: tuple) -> dict:
+    tif_path, polygon_path, output_dir, burn_value, output_suffix = task
+    return mask_one_tile(
+        tif_path,
+        polygon_path,
+        output_dir,
+        burn_value=burn_value,
+        output_suffix=output_suffix,
+    )
+
 
 def main() -> int:
     args = parse_args()
@@ -345,7 +355,7 @@ def main() -> int:
             )
     else:
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(mask_one_tile, *t): t[0] for t in tasks}
+            futures = {pool.submit(_mask_one_tile_task, t): t[0] for t in tasks}
             for fut in as_completed(futures):
                 summary = fut.result()
                 summaries.append(summary)
