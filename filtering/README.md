@@ -333,27 +333,13 @@ bash vectorize/run_vectorize_national_pipeline.sh   # opcional
 # Opción B: todo en secuencia (login)
 bash vectorize/run_post_filter_pipeline.sh
 
-# Opción C: pasos manuales (mismo criterio)
-export VECTORIZE_SKIP_SIEVE=1
+# Opción C: pasos manuales (producción: pre-filtro 20 ha + percentiles)
 bash vectorize/run_vectorize_pipeline.sh
-
-# 2) Histograms (PNG for inspection)
-python filtering/summarize_histograms_by_region.py \
-  --input-dir "${WORK_ROOT}/polygons" \
-  --output-dir "${WORK_ROOT}/histogramas_area"
-
-# 3) Recommended thresholds (JSON + CSV per region and region×year)
-python filtering/recommend_polygon_area_thresholds.py \
-  --input-dir "${WORK_ROOT}/polygons" \
-  --output-dir "${WORK_ROOT}/thresholds_area"
-
-# 4) Filter (per-region×year P25 example; fallback: region → global)
-python filtering/filter_polygons_by_threshold.py \
-  --input-dir "${WORK_ROOT}/polygons" \
-  --output-gpkg "${WORK_ROOT}/polygons_filtered.gpkg" \
-  --stats-summary-json "${WORK_ROOT}/thresholds_area/threshold_summary.json" \
-  --threshold-rule p25 \
-  --per-region-year
+bash filtering/run_polygon_area_pipeline.sh
+# o por paso:
+#   STEPS=pre_filter bash filtering/run_polygon_area_pipeline.sh
+#   STEPS=histograms,recommend bash filtering/run_polygon_area_pipeline.sh
+#   POLYGON_THRESHOLD_RULE=p25 STEPS=filter bash filtering/run_polygon_area_pipeline.sh
 ```
 
 Or set one manual cutoff for all tiles:

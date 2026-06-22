@@ -206,23 +206,23 @@ Salidas: `polygons_min20ha/`, `histogramas_area_min20ha/`, `thresholds_area_min2
 
 ### Conservative retrain (A/B vs 20260618 overestimation)
 
-Same recipe as production 20260619, but outputs go to `models_col1_conservative` / `classification_conservative` for comparison:
+Archived env files live under `experiments/`. Same recipe as production 20260619, but outputs go to `models_col1_conservative` / `classification_conservative` for comparison:
 
 ```bash
-cp classification/cluster_paths.train_conservative.env.leftraru classification/cluster_paths.env
+cp experiments/classification/cluster_paths.train_conservative.env.leftraru classification/cluster_paths.env
 source classification/cluster_paths.env
 bash classification/run_train_chile_campaign.sh
 
-cp classification/cluster_paths.classify_conservative.env.leftraru classification/cluster_paths.env
+cp experiments/classification/cluster_paths.classify_conservative.env.leftraru classification/cluster_paths.env
 source classification/cluster_paths.env
 sbatch --export=ALL classification/run_classify_chile_slurm.sh
 
-cp filtering/cluster_paths.conservative.env.leftraru filtering/cluster_paths.env
+cp experiments/filtering/cluster_paths.conservative.env.leftraru filtering/cluster_paths.env
 source filtering/cluster_paths.env
 bash filtering/run_filtering_pipeline.sh
 ```
 
-Compare against `classification_20260618` in QGIS; copy to `classification_20260619` when satisfied (see above).
+Compare against `classification_20260618` in QGIS; copy to `classification_20260619` when satisfied (see above). See [experiments/README.md](../experiments/README.md).
 
 ### Compute notes
 
