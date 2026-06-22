@@ -7,7 +7,7 @@
 #SBATCH -c 8
 #SBATCH --mem=128GB
 #SBATCH --mail-type=ALL
-#SBATCH -t 04:00:00
+#SBATCH -t 01:00:00
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 
