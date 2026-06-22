@@ -108,7 +108,11 @@ def parse_args() -> argparse.Namespace:
         default=30.0,
         help="Heartbeat interval while waiting on workers (0=off, default: 30).",
     )
-    parser.add_argument("--stats-json", default=None, help="Optional JSON summary path.")
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip inputs whose output file already exists in --output-dir.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Report tasks only.")
     return parser.parse_args()
 
@@ -328,6 +332,15 @@ def year_in_fill_range(year: int | None, *, from_year: int, to_year: int) -> boo
     return year is not None and from_year <= year <= to_year
 
 
+def output_path_for_input(
+    tif_path: Path,
+    output_dir: Path,
+    *,
+    output_suffix: str,
+) -> Path:
+    return output_dir / f"{tif_path.stem}{output_suffix}.tif"
+
+
 def main() -> int:
     args = parse_args()
     input_dir = Path(args.input_dir)
@@ -370,10 +383,18 @@ def main() -> int:
     fill_tasks = []
     passthrough_tasks = []
     skipped = []
+    skipped_existing = 0
     for tif_path in tif_paths:
         year = parse_calendar_year(tif_path)
         if year is None:
             skipped.append({"raster": str(tif_path), "reason": "no_year"})
+            continue
+
+        out_path = output_path_for_input(
+            tif_path, output_dir, output_suffix=args.output_suffix
+        )
+        if args.skip_existing and out_path.exists():
+            skipped_existing += 1
             continue
 
         if not year_in_fill_range(year, from_year=args.from_year, to_year=args.to_year):
@@ -400,10 +421,14 @@ def main() -> int:
 
     print(
         f"[INFO] Input rasters: {len(tif_paths)} | Fill: {len(fill_tasks)} | "
-        f"Passthrough: {len(passthrough_tasks)} | Skipped: {len(skipped)}",
+        f"Passthrough: {len(passthrough_tasks)} | Skipped: {len(skipped)} | "
+        f"Already done: {skipped_existing}",
         flush=True,
     )
     if not fill_tasks and not passthrough_tasks:
+        if skipped_existing:
+            print("[INFO] All outputs already exist; nothing to do.", flush=True)
+            return 0
         raise RuntimeError("No raster tasks resolved. Check filenames and year range.")
 
     if args.dry_run:
@@ -493,6 +518,7 @@ def main() -> int:
         "tiles_filled": sum(1 for s in summaries if s.get("action") == "fill"),
         "tiles_passthrough": sum(1 for s in summaries if s.get("action") == "passthrough"),
         "tiles_skipped": len(skipped),
+        "tiles_skipped_existing": skipped_existing,
         "skipped": skipped,
         "summaries": summaries,
     }

@@ -39,6 +39,7 @@ MERGE_FILLED_OUTPUT_STEM="${MERGE_FILLED_OUTPUT_STEM:-chile_burn_p25_filled}"
 REFERENCE_SCARS_SHP="${REFERENCE_SCARS_SHP:-/home/flepin/validation/UNIDOS_13_18.shp}"
 REFERENCE_YEAR_COLUMN="${REFERENCE_YEAR_COLUMN:-Season}"
 FILL_REQUIRE_OVERLAP="${FILL_REQUIRE_OVERLAP:-1}"
+FILL_SKIP_EXISTING="${FILL_SKIP_EXISTING:-0}"
 FILL_FROM_YEAR="${FILL_FROM_YEAR:-2013}"
 FILL_TO_YEAR="${FILL_TO_YEAR:-2018}"
 PROGRESS_HEARTBEAT_SEC="${PROGRESS_HEARTBEAT_SEC:-30}"
@@ -136,6 +137,9 @@ if step_enabled "fill_tiles"; then
     FILL_ARGS+=(--require-overlap)
   else
     FILL_ARGS+=(--no-require-overlap)
+  fi
+  if [[ "${FILL_SKIP_EXISTING}" == "1" ]]; then
+    FILL_ARGS+=(--skip-existing)
   fi
   log "=== Fill tile rasters from reference scars ==="
   log "Input TIF:  ${OUTPUT_BY_TILE}"
