@@ -114,6 +114,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip inputs whose output file already exists in --output-dir.",
     )
+    parser.add_argument("--stats-json", default=None, help="Optional JSON summary path.")
     parser.add_argument("--dry-run", action="store_true", help="Report tasks only.")
     return parser.parse_args()
 
