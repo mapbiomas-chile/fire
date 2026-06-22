@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
@@ -63,6 +64,27 @@ def parse_args() -> argparse.Namespace:
         "--output-suffix",
         default="_reference_filled",
         help="Suffix appended to output filename stem (default: _reference_filled).",
+    )
+    parser.add_argument(
+        "--from-year",
+        type=int,
+        default=2013,
+        help="First calendar year to apply reference fill (default: 2013).",
+    )
+    parser.add_argument(
+        "--to-year",
+        type=int,
+        default=2018,
+        help="Last calendar year to apply reference fill (default: 2018).",
+    )
+    parser.add_argument(
+        "--passthrough-outside-range",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Copy input rasters unchanged for years outside from-year..to-year "
+            "so downstream merges still see all tiles (default: true)."
+        ),
     )
     parser.add_argument(
         "--require-overlap",
@@ -257,6 +279,32 @@ def fill_one_raster(
     }
 
 
+def passthrough_one_raster(
+    tif_path: Path,
+    output_dir: Path,
+    *,
+    output_suffix: str,
+) -> dict:
+    tif_path = Path(tif_path)
+    output_dir = Path(output_dir)
+    output_path = output_dir / f"{tif_path.stem}{output_suffix}.tif"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(tif_path, output_path)
+    return {
+        "input_raster": str(tif_path),
+        "output_raster": str(output_path),
+        "region": parse_region(tif_path),
+        "year": parse_calendar_year(tif_path),
+        "action": "passthrough",
+        "pixels_filled": 0,
+    }
+
+
+def _passthrough_task(task: tuple) -> dict:
+    tif_path, output_dir, output_suffix = task
+    return passthrough_one_raster(tif_path, output_dir, output_suffix=output_suffix)
+
+
 def _fill_one_raster_task(task: tuple) -> dict:
     tif_path, output_dir, year_gdf, burn_value, output_suffix, require_overlap = task
     return fill_one_raster(
@@ -267,6 +315,10 @@ def _fill_one_raster_task(task: tuple) -> dict:
         output_suffix=output_suffix,
         require_overlap=require_overlap,
     )
+
+
+def year_in_fill_range(year: int | None, *, from_year: int, to_year: int) -> bool:
+    return year is not None and from_year <= year <= to_year
 
 
 def main() -> int:
@@ -284,10 +336,23 @@ def main() -> int:
     if not tif_paths:
         raise RuntimeError(f"No rasters found in {input_dir} with pattern {args.pattern!r}")
 
+    if args.from_year > args.to_year:
+        raise ValueError(f"--from-year ({args.from_year}) must be <= --to-year ({args.to_year})")
+
     by_year = load_reference_by_year(reference_path, year_column=args.year_column)
+    by_year = {
+        year: gdf
+        for year, gdf in by_year.items()
+        if args.from_year <= year <= args.to_year
+    }
+    if not by_year:
+        raise RuntimeError(
+            f"No reference features in years {args.from_year}..{args.to_year}. "
+            "Check --from-year / --to-year and the reference layer."
+        )
     print(
-        f"[INFO] Reference: {reference_path} | years {min(by_year)}..{max(by_year)} "
-        f"({len(by_year)} year groups)",
+        f"[INFO] Reference: {reference_path} | fill years {args.from_year}..{args.to_year} "
+        f"({len(by_year)} year groups in reference)",
         flush=True,
     )
     print(
@@ -295,18 +360,27 @@ def main() -> int:
         flush=True,
     )
 
-    tasks = []
+    fill_tasks = []
+    passthrough_tasks = []
     skipped = []
     for tif_path in tif_paths:
         year = parse_calendar_year(tif_path)
         if year is None:
             skipped.append({"raster": str(tif_path), "reason": "no_year"})
             continue
+
+        if not year_in_fill_range(year, from_year=args.from_year, to_year=args.to_year):
+            if args.passthrough_outside_range:
+                passthrough_tasks.append((tif_path, output_dir, args.output_suffix))
+            else:
+                skipped.append({"raster": str(tif_path), "reason": f"outside_range_{year}"})
+            continue
+
         year_gdf = by_year.get(year)
         if year_gdf is None or year_gdf.empty:
             skipped.append({"raster": str(tif_path), "reason": f"no_reference_year_{year}"})
             continue
-        tasks.append(
+        fill_tasks.append(
             (
                 tif_path,
                 output_dir,
@@ -318,46 +392,76 @@ def main() -> int:
         )
 
     print(
-        f"[INFO] Input rasters: {len(tif_paths)} | Tasks: {len(tasks)} | Skipped: {len(skipped)}",
+        f"[INFO] Input rasters: {len(tif_paths)} | Fill: {len(fill_tasks)} | "
+        f"Passthrough: {len(passthrough_tasks)} | Skipped: {len(skipped)}",
         flush=True,
     )
-    if not tasks:
-        raise RuntimeError("No raster/year tasks resolved. Check filenames and reference years.")
+    if not fill_tasks and not passthrough_tasks:
+        raise RuntimeError("No raster tasks resolved. Check filenames and year range.")
 
     if args.dry_run:
-        for task in tasks[:5]:
+        for task in fill_tasks[:5]:
             print(
-                f"[DRY-RUN] {task[0].name} (year={parse_calendar_year(task[0])}, "
+                f"[DRY-RUN] FILL {task[0].name} (year={parse_calendar_year(task[0])}, "
                 f"region=r{parse_region(task[0])})",
                 flush=True,
             )
-        print(f"[DRY-RUN] Would fill {len(tasks)} raster(s).", flush=True)
+        for task in passthrough_tasks[:3]:
+            print(f"[DRY-RUN] COPY {task[0].name}", flush=True)
+        print(
+            f"[DRY-RUN] Would fill {len(fill_tasks)} raster(s) and "
+            f"passthrough {len(passthrough_tasks)}.",
+            flush=True,
+        )
         return 0
 
     summaries: list[dict] = []
     workers = max(1, args.workers)
+    all_tasks: list[tuple[str, tuple]] = [
+        ("fill", t) for t in fill_tasks
+    ] + [("passthrough", t) for t in passthrough_tasks]
+
     if workers == 1:
-        for task in tasks:
-            summary = _fill_one_raster_task(task)
+        for kind, task in all_tasks:
+            if kind == "fill":
+                summary = _fill_one_raster_task(task)
+                summary["action"] = "fill"
+            else:
+                summary = _passthrough_task(task)
             summaries.append(summary)
-            print(
-                f"[INFO] {Path(summary['input_raster']).name}: "
-                f"+{summary['pixels_filled']} px "
-                f"({summary['burn_pixels_before']} → {summary['burn_pixels_after']})",
-                flush=True,
-            )
-    else:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_fill_one_raster_task, t): t[0] for t in tasks}
-            for fut in as_completed(futures):
-                summary = fut.result()
-                summaries.append(summary)
+            if kind == "fill":
                 print(
                     f"[INFO] {Path(summary['input_raster']).name}: "
                     f"+{summary['pixels_filled']} px "
                     f"({summary['burn_pixels_before']} → {summary['burn_pixels_after']})",
                     flush=True,
                 )
+            else:
+                print(f"[INFO] {Path(summary['input_raster']).name}: passthrough", flush=True)
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for kind, task in all_tasks:
+                if kind == "fill":
+                    fut = pool.submit(_fill_one_raster_task, task)
+                else:
+                    fut = pool.submit(_passthrough_task, task)
+                futures[fut] = (kind, task[0])
+
+            for fut in as_completed(futures):
+                kind, tif_path = futures[fut]
+                summary = fut.result()
+                summary["action"] = kind
+                summaries.append(summary)
+                if kind == "fill":
+                    print(
+                        f"[INFO] {tif_path.name}: "
+                        f"+{summary['pixels_filled']} px "
+                        f"({summary['burn_pixels_before']} → {summary['burn_pixels_after']})",
+                        flush=True,
+                    )
+                else:
+                    print(f"[INFO] {tif_path.name}: passthrough", flush=True)
 
     payload = {
         "run_timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -365,8 +469,11 @@ def main() -> int:
         "output_dir": str(output_dir),
         "reference_shp": str(reference_path),
         "year_column": args.year_column,
+        "from_year": args.from_year,
+        "to_year": args.to_year,
         "require_overlap": args.require_overlap,
-        "tiles_filled": len(summaries),
+        "tiles_filled": sum(1 for s in summaries if s.get("action") == "fill"),
+        "tiles_passthrough": sum(1 for s in summaries if s.get("action") == "passthrough"),
         "tiles_skipped": len(skipped),
         "skipped": skipped,
         "summaries": summaries,
@@ -380,7 +487,10 @@ def main() -> int:
 
     if skipped:
         print(f"[WARNING] Skipped {len(skipped)} raster(s).", flush=True)
-    print(f"[INFO] Wrote {len(summaries)} filled raster(s) to {output_dir}")
+    print(
+        f"[INFO] Wrote {len(summaries)} raster(s) to {output_dir} "
+        f"({payload['tiles_filled']} filled, {payload['tiles_passthrough']} passthrough)"
+    )
     return 0
 
 
