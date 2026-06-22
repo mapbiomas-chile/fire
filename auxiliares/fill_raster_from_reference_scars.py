@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import sys
+import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -26,10 +27,9 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
-from rasterio.features import rasterize, shapes as rio_shapes
+from rasterio.features import rasterize
 from rasterio.transform import array_bounds
-from shapely.geometry import box, shape
-from shapely.ops import unary_union
+from shapely.geometry import box
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -191,24 +191,6 @@ def rasterize_shapes(
     )
 
 
-def burn_footprint(burn_mask: np.ndarray, transform) -> object | None:
-    """Vector footprint of existing burn pixels (one union), for fast overlap tests."""
-    geoms = [
-        shape(geom)
-        for geom, val in rio_shapes(
-            burn_mask.astype(np.uint8),
-            transform=transform,
-            connectivity=8,
-        )
-        if val == 1
-    ]
-    if not geoms:
-        return None
-    if len(geoms) == 1:
-        return geoms[0]
-    return unary_union(geoms)
-
-
 def select_reference_shapes(
     gdf: gpd.GeoDataFrame,
     *,
@@ -225,26 +207,36 @@ def select_reference_shapes(
         transform=transform,
         crs=crs,
     )
-    if clipped.empty:
+    geoms = [
+        geom
+        for geom in clipped.geometry
+        if geom is not None and not geom.is_empty
+    ]
+    if not geoms:
         return []
 
     if not require_overlap:
-        return [
-            (geom, 1)
-            for geom in clipped.geometry
-            if geom is not None and not geom.is_empty
-        ]
+        return [(geom, 1) for geom in geoms]
 
-    footprint = burn_footprint(burn_mask, transform)
-    if footprint is None or footprint.is_empty:
+    # One labeled rasterize, then polygon ids that touch burn pixels (fast vs per-polygon rasterize).
+    shapes_id = [(geom, idx + 1) for idx, geom in enumerate(geoms)]
+    labels = rasterize(
+        shapes_id,
+        out_shape=out_shape,
+        transform=transform,
+        fill=0,
+        dtype=np.uint32,
+    )
+    if not burn_mask.any():
         return []
 
-    selected = clipped[clipped.intersects(footprint)]
-    return [
-        (geom, 1)
-        for geom in selected.geometry
-        if geom is not None and not geom.is_empty
-    ]
+    hit_ids = np.unique(labels[burn_mask])
+    hit_ids = hit_ids[hit_ids > 0]
+    if hit_ids.size == 0:
+        return []
+
+    id_set = {int(i) for i in hit_ids}
+    return [(geoms[i - 1], 1) for i in sorted(id_set)]
 
 
 def fill_one_raster(
@@ -474,6 +466,7 @@ def main() -> int:
         return 0
 
     summaries: list[dict] = []
+    errors: list[dict] = []
     workers = max(1, args.workers)
     all_tasks: list[tuple[str, tuple]] = [
         ("fill", t) for t in fill_tasks
@@ -488,12 +481,24 @@ def main() -> int:
 
     if workers == 1:
         for kind, task in all_tasks:
-            if kind == "fill":
-                summary = _fill_one_raster_task(task)
-                summary["action"] = "fill"
-            else:
-                summary = _passthrough_task(task)
-            summaries.append(summary)
+            try:
+                if kind == "fill":
+                    summary = _fill_one_raster_task(task)
+                    summary["action"] = "fill"
+                else:
+                    summary = _passthrough_task(task)
+                summaries.append(summary)
+            except Exception as exc:
+                tif_path = task[0]
+                errors.append(
+                    {
+                        "raster": str(tif_path),
+                        "error": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
+                print(f"[ERROR] {tif_path.name}: {exc}", flush=True)
+                continue
             progress.step(Path(summary["input_raster"]).name)
             if kind == "fill":
                 print(
@@ -516,7 +521,18 @@ def main() -> int:
 
             for fut in as_completed(futures):
                 kind, tif_path = futures[fut]
-                summary = fut.result()
+                try:
+                    summary = fut.result()
+                except Exception as exc:
+                    errors.append(
+                        {
+                            "raster": str(tif_path),
+                            "error": str(exc),
+                            "traceback": traceback.format_exc(),
+                        }
+                    )
+                    print(f"[ERROR] {tif_path.name}: {exc}", flush=True)
+                    continue
                 summary["action"] = kind
                 summaries.append(summary)
                 progress.step(tif_path.name)
@@ -545,6 +561,7 @@ def main() -> int:
         "tiles_passthrough": sum(1 for s in summaries if s.get("action") == "passthrough"),
         "tiles_skipped": len(skipped),
         "tiles_skipped_existing": skipped_existing,
+        "errors": errors,
         "skipped": skipped,
         "summaries": summaries,
     }
@@ -555,13 +572,15 @@ def main() -> int:
             json.dump(payload, f, indent=2)
         print(f"[INFO] Stats: {stats_path}")
 
+    if errors:
+        print(f"[ERROR] {len(errors)} tile(s) failed.", flush=True)
     if skipped:
         print(f"[WARNING] Skipped {len(skipped)} raster(s).", flush=True)
     print(
         f"[INFO] Wrote {len(summaries)} raster(s) to {output_dir} "
         f"({payload['tiles_filled']} filled, {payload['tiles_passthrough']} passthrough)"
     )
-    return 0
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
