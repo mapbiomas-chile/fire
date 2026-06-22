@@ -104,3 +104,25 @@ bash auxiliares/watch_to_gee_progress.sh
 ```
 
 Refreshes every 15 s with TIF counts per folder and the latest file written.
+
+### SLURM (tiles pesados, ej. 2017)
+
+Los tiles 2017 pueden agotar RAM en el nodo login. Usar cómputo con `auxiliares/run_to_gee_fill_slurm.sh` (128 GB, 1 worker).
+
+```bash
+cd ~/fire
+cp auxiliares/cluster_paths.to_gee.env.leftraru auxiliares/cluster_paths.env
+# Editar mail-user en run_to_gee_fill_slurm.sh si hace falta
+
+# Opción A — un job secuencial (3 tiles 2017 faltantes, ~2–4 h)
+sbatch auxiliares/run_to_gee_fill_slurm.sh
+
+# Opción B — 3 jobs en paralelo (uno por región r2/r4/r6)
+sbatch --array=0-2 auxiliares/run_to_gee_fill_slurm.sh
+
+# Cuando by_tile_filled tenga 52 tifs (login node):
+source auxiliares/cluster_paths.env
+STEPS=fill_merge_years bash auxiliares/run_to_gee_pipeline.sh
+```
+
+Seguir el job: `tail -f ~/logs/fire_to_gee_fill_<jobid>.out`
