@@ -58,7 +58,7 @@ STEPS=fill_merge_years bash auxiliares/run_to_gee_pipeline.sh
 
 ### Reference fill
 
-Uses `validation/UNIDOS_13_18.shp` (column `Season` = year). For each tile/year, rasterizes reference scars on the TIF grid and sets burn pixels where the reference mask is 1 but the raster is still 0. By default (`FILL_REQUIRE_OVERLAP=1`) only polygons that already overlap existing burn pixels are used—interior gaps are filled, not whole missed scars.
+Uses `/home/flepin/validation/UNIDOS_13_18.shp` (column `Season` = year). For each tile/year, rasterizes reference scars on the TIF grid and sets burn pixels where the reference mask is 1 but the raster is still 0. By default (`FILL_REQUIRE_OVERLAP=1`) only polygons that already overlap existing burn pixels are used—interior gaps are filled, not whole missed scars.
 
 ```bash
 python auxiliares/fill_raster_from_reference_scars.py \
