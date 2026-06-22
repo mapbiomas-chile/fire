@@ -41,6 +41,7 @@ REFERENCE_YEAR_COLUMN="${REFERENCE_YEAR_COLUMN:-Season}"
 FILL_REQUIRE_OVERLAP="${FILL_REQUIRE_OVERLAP:-1}"
 FILL_FROM_YEAR="${FILL_FROM_YEAR:-2013}"
 FILL_TO_YEAR="${FILL_TO_YEAR:-2018}"
+PROGRESS_HEARTBEAT_SEC="${PROGRESS_HEARTBEAT_SEC:-30}"
 MASK_WORKERS="${MASK_WORKERS:-4}"
 FILL_WORKERS="${FILL_WORKERS:-${MASK_WORKERS}}"
 POLYGON_SUFFIX="${POLYGON_SUFFIX:-auto}"
@@ -70,6 +71,8 @@ fi
 cd "${REPO_ROOT}"
 mkdir -p "${TO_GEE_ROOT}" "${TO_GEE_ROOT}/logs"
 
+log "Tip: open another terminal and run: bash auxiliares/watch_to_gee_progress.sh"
+
 if step_enabled "mask_tiles"; then
   for d in "${CLASSIFIED_INPUT_DIR}" "${POLYGON_INPUT_DIR}"; do
     if [[ ! -d "${d}" ]]; then
@@ -88,6 +91,7 @@ if step_enabled "mask_tiles"; then
     --output-dir "${OUTPUT_BY_TILE}" \
     --polygon-suffix "${POLYGON_SUFFIX}" \
     --workers "${MASK_WORKERS}" \
+    --heartbeat-sec "${PROGRESS_HEARTBEAT_SEC}" \
     --stats-json "${TO_GEE_ROOT}/logs/mask_by_polygons_stats.json"
 fi
 
@@ -125,6 +129,7 @@ if step_enabled "fill_tiles"; then
     --from-year "${FILL_FROM_YEAR}"
     --to-year "${FILL_TO_YEAR}"
     --workers "${FILL_WORKERS}"
+    --heartbeat-sec "${PROGRESS_HEARTBEAT_SEC}"
     --stats-json "${TO_GEE_ROOT}/logs/fill_reference_tiles_stats.json"
   )
   if [[ "${FILL_REQUIRE_OVERLAP}" == "1" ]]; then

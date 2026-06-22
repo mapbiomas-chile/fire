@@ -35,6 +35,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from lib.tile_metadata import parse_calendar_year, parse_region  # noqa: E402
+from lib.run_progress import RunProgress  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,6 +101,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=max(1, (os.cpu_count() or 1) - 1),
         help="Parallel workers (default: cpu_count - 1).",
+    )
+    parser.add_argument(
+        "--heartbeat-sec",
+        type=float,
+        default=30.0,
+        help="Heartbeat interval while waiting on workers (0=off, default: 30).",
     )
     parser.add_argument("--stats-json", default=None, help="Optional JSON summary path.")
     parser.add_argument("--dry-run", action="store_true", help="Report tasks only.")
@@ -421,6 +428,13 @@ def main() -> int:
         ("fill", t) for t in fill_tasks
     ] + [("passthrough", t) for t in passthrough_tasks]
 
+    progress = RunProgress(
+        len(all_tasks),
+        label="Reference fill",
+        heartbeat_sec=args.heartbeat_sec,
+    )
+    progress.start()
+
     if workers == 1:
         for kind, task in all_tasks:
             if kind == "fill":
@@ -429,6 +443,7 @@ def main() -> int:
             else:
                 summary = _passthrough_task(task)
             summaries.append(summary)
+            progress.step(Path(summary["input_raster"]).name)
             if kind == "fill":
                 print(
                     f"[INFO] {Path(summary['input_raster']).name}: "
@@ -453,6 +468,7 @@ def main() -> int:
                 summary = fut.result()
                 summary["action"] = kind
                 summaries.append(summary)
+                progress.step(tif_path.name)
                 if kind == "fill":
                     print(
                         f"[INFO] {tif_path.name}: "
@@ -462,6 +478,8 @@ def main() -> int:
                     )
                 else:
                     print(f"[INFO] {tif_path.name}: passthrough", flush=True)
+
+    progress.finish()
 
     payload = {
         "run_timestamp": datetime.now().isoformat(timespec="seconds"),

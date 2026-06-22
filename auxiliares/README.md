@@ -91,3 +91,16 @@ python validation/merge_reprojected_tiles_by_year.py \
 ```
 
 The vector GPKG layer in `polygons_filtered_min20ha_p25/` is the **authoritative** burn extent; the output raster keeps the original grid and only retains burn pixels inside those polygons.
+
+### Progress / “¿está corriendo o colgado?”
+
+While the pipeline runs, Python scripts print `[PROGRESS]` lines every ~30 s (bar, count, ETA, last file). Tune with `PROGRESS_HEARTBEAT_SEC` in `cluster_paths.env`.
+
+In a **second terminal** on leftraru:
+
+```bash
+source auxiliares/cluster_paths.env
+bash auxiliares/watch_to_gee_progress.sh
+```
+
+Refreshes every 15 s with TIF counts per folder and the latest file written.

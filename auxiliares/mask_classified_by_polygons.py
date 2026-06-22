@@ -30,6 +30,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from lib.tile_metadata import parse_calendar_year, parse_region  # noqa: E402
+from lib.run_progress import RunProgress  # noqa: E402
 
 AUTO_POLYGON_SUFFIXES = ("_burn", "_mask1", "")
 
@@ -83,6 +84,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=max(1, (os.cpu_count() or 1) - 1),
         help="Parallel workers (default: cpu_count - 1).",
+    )
+    parser.add_argument(
+        "--heartbeat-sec",
+        type=float,
+        default=30.0,
+        help="Heartbeat interval while waiting on workers (0=off, default: 30).",
     )
     parser.add_argument(
         "--stats-json",
@@ -338,6 +345,12 @@ def main() -> int:
 
     summaries: list[dict] = []
     workers = max(1, args.workers)
+    progress = RunProgress(
+        len(tasks),
+        label="Mask tiles",
+        heartbeat_sec=args.heartbeat_sec,
+    )
+    progress.start()
     if workers == 1:
         for task in tasks:
             summary = mask_one_tile(
@@ -348,6 +361,7 @@ def main() -> int:
                 output_suffix=task[4],
             )
             summaries.append(summary)
+            progress.step(Path(summary["input_raster"]).name)
             print(
                 f"[INFO] {Path(summary['input_raster']).name}: "
                 f"{summary['burn_pixels_before']} → {summary['burn_pixels_after']} burn px",
@@ -359,11 +373,13 @@ def main() -> int:
             for fut in as_completed(futures):
                 summary = fut.result()
                 summaries.append(summary)
+                progress.step(Path(summary["input_raster"]).name)
                 print(
                     f"[INFO] {Path(summary['input_raster']).name}: "
                     f"{summary['burn_pixels_before']} → {summary['burn_pixels_after']} burn px",
                     flush=True,
                 )
+    progress.finish()
 
     payload = {
         "run_timestamp": datetime.now().isoformat(timespec="seconds"),
