@@ -39,16 +39,19 @@ STEPS=merge_years bash auxiliares/run_to_gee_pipeline.sh
 
 ### Pairing rule
 
-For each raster `foo.tif`, the polygon file must be `foo_burn.gpkg` (suffix configurable via `--polygon-suffix`).
-
-### Manual
+For each raster `foo.tif`, the script looks for `foo_burn.gpkg`, then `foo_mask1.gpkg`, then any GPKG with the same **region × year** (`POLYGON_SUFFIX=auto`, default). Use `--dry-run` to verify pairs before writing.
 
 ```bash
 python auxiliares/mask_classified_by_polygons.py \
   --input-dir "${WORK_ROOT}/classified_filtered" \
   --polygon-dir "${WORK_ROOT}/polygons_filtered_min20ha_p25" \
-  --output-dir "/home/flepin/toGEE/by_tile"
+  --output-dir "/home/flepin/toGEE/by_tile" \
+  --dry-run
+```
 
+### Manual merge
+
+```bash
 python validation/merge_reprojected_tiles_by_year.py \
   --input-dir "/home/flepin/toGEE/by_tile" \
   --output-dir "/home/flepin/toGEE/by_year_chile" \

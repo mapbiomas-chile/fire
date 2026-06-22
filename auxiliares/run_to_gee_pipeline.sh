@@ -31,6 +31,7 @@ OUTPUT_BY_TILE="${OUTPUT_BY_TILE:-${TO_GEE_ROOT}/by_tile}"
 OUTPUT_BY_YEAR="${OUTPUT_BY_YEAR:-${TO_GEE_ROOT}/by_year_chile}"
 MERGE_OUTPUT_STEM="${MERGE_OUTPUT_STEM:-chile_burn_p25}"
 MASK_WORKERS="${MASK_WORKERS:-4}"
+POLYGON_SUFFIX="${POLYGON_SUFFIX:-auto}"
 STEPS="${STEPS:-all}"
 
 log() { echo "[$(date -Iseconds)] $*"; }
@@ -65,6 +66,7 @@ if step_enabled "mask_tiles"; then
     --input-dir "${CLASSIFIED_INPUT_DIR}" \
     --polygon-dir "${POLYGON_INPUT_DIR}" \
     --output-dir "${OUTPUT_BY_TILE}" \
+    --polygon-suffix "${POLYGON_SUFFIX}" \
     --workers "${MASK_WORKERS}" \
     --stats-json "${TO_GEE_ROOT}/logs/mask_by_polygons_stats.json"
 fi

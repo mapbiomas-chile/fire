@@ -31,6 +31,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from lib.tile_metadata import parse_calendar_year, parse_region  # noqa: E402
 
+AUTO_POLYGON_SUFFIXES = ("_burn", "_mask1", "")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -54,8 +56,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pattern", default="*.tif", help="Input raster glob (default: *.tif).")
     parser.add_argument(
         "--polygon-suffix",
-        default="_burn",
-        help="Polygon stem suffix before .gpkg (default: _burn → {tif_stem}_burn.gpkg).",
+        default="auto",
+        help=(
+            "Polygon stem suffix before .gpkg, or 'auto' to try _burn, _mask1, then "
+            "region×year fallback (default: auto)."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Only report raster/polygon pairs; do not write outputs.",
     )
     parser.add_argument(
         "--burn-value",
@@ -82,14 +92,59 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def polygon_path_for_raster(
+def normalize_polygon_suffix(suffix: str) -> str:
+    if suffix == "":
+        return ""
+    return suffix if suffix.startswith("_") else f"_{suffix}"
+
+
+def build_polygon_region_year_index(polygon_dir: Path) -> dict[tuple[str, int], list[Path]]:
+    index: dict[tuple[str, int], list[Path]] = {}
+    for gpkg_path in polygon_dir.glob("*.gpkg"):
+        region = parse_region(gpkg_path)
+        year = parse_calendar_year(gpkg_path)
+        if region is None or year is None:
+            continue
+        index.setdefault((region, year), []).append(gpkg_path)
+    for key in index:
+        index[key] = sorted(index[key], key=lambda p: p.name)
+    return index
+
+
+def resolve_polygon_path(
     tif_path: Path,
     polygon_dir: Path,
     *,
     polygon_suffix: str,
-) -> Path:
-    suffix = polygon_suffix if polygon_suffix.startswith("_") else f"_{polygon_suffix}"
-    return polygon_dir / f"{tif_path.stem}{suffix}.gpkg"
+    polygon_index: dict[tuple[str, int], list[Path]],
+) -> tuple[Path | None, str]:
+    if polygon_suffix == "auto":
+        suffixes = AUTO_POLYGON_SUFFIXES
+    else:
+        suffixes = (normalize_polygon_suffix(polygon_suffix),)
+
+    for suffix in suffixes:
+        candidate = polygon_dir / f"{tif_path.stem}{suffix}.gpkg"
+        if candidate.exists():
+            return candidate, f"stem{suffix or ''}"
+
+    region = parse_region(tif_path)
+    year = parse_calendar_year(tif_path)
+    if region is None or year is None:
+        return None, "missing_region_or_year"
+
+    candidates = polygon_index.get((region, year), [])
+    if len(candidates) == 1:
+        return candidates[0], "region_year"
+    if len(candidates) > 1:
+        stem = tif_path.stem
+        best = max(
+            candidates,
+            key=lambda p: len(os.path.commonprefix([stem, p.stem])),
+        )
+        return best, "region_year_best_stem"
+
+    return None, "not_found"
 
 
 def rasterize_polygon_mask(
@@ -185,9 +240,6 @@ def mask_one_tile(
     }
 
 
-def _task(args: tuple) -> dict:
-    return mask_one_tile(*args)
-
 
 def main() -> int:
     args = parse_args()
@@ -204,14 +256,34 @@ def main() -> int:
     if not tif_paths:
         raise RuntimeError(f"No rasters found in {input_dir} with pattern {args.pattern!r}")
 
+    polygon_index = build_polygon_region_year_index(polygon_dir)
+    polygon_files = sorted(polygon_dir.glob("*.gpkg"))
+
     tasks = []
     skipped = []
+    pairs: list[dict] = []
     for tif_path in tif_paths:
-        poly_path = polygon_path_for_raster(
-            tif_path, polygon_dir, polygon_suffix=args.polygon_suffix
+        poly_path, match_mode = resolve_polygon_path(
+            tif_path,
+            polygon_dir,
+            polygon_suffix=args.polygon_suffix,
+            polygon_index=polygon_index,
         )
-        if not poly_path.exists():
-            skipped.append({"raster": str(tif_path), "expected_polygon": str(poly_path)})
+        pair_info = {
+            "raster": tif_path.name,
+            "polygon": poly_path.name if poly_path else None,
+            "match_mode": match_mode,
+        }
+        pairs.append(pair_info)
+        if poly_path is None:
+            skipped.append(
+                {
+                    "raster": str(tif_path),
+                    "region": parse_region(tif_path),
+                    "year": parse_calendar_year(tif_path),
+                    "reason": match_mode,
+                }
+            )
             continue
         tasks.append(
             (
@@ -223,8 +295,36 @@ def main() -> int:
             )
         )
 
+    print(
+        f"[INFO] Input rasters: {len(tif_paths)} | Polygon GPKGs: {len(polygon_files)} | "
+        f"Pairs resolved: {len(tasks)} | Skipped: {len(skipped)}",
+        flush=True,
+    )
+    for pair in pairs[:3]:
+        print(
+            f"[INFO] Example pair: {pair['raster']} ← {pair['polygon']} ({pair['match_mode']})",
+            flush=True,
+        )
+
     if not tasks:
-        raise RuntimeError("No raster/polygon pairs found. Check --polygon-dir and --polygon-suffix.")
+        sample_gpkg = [p.name for p in polygon_files[:3]]
+        sample_tif = [p.name for p in tif_paths[:3]]
+        raise RuntimeError(
+            "No raster/polygon pairs found.\n"
+            f"  TIF dir ({input_dir}): {len(tif_paths)} files, e.g. {sample_tif}\n"
+            f"  GPKG dir ({polygon_dir}): {len(polygon_files)} files, e.g. {sample_gpkg}\n"
+            "  Try --polygon-suffix auto (default) or check that stems / region×year align."
+        )
+
+    if args.dry_run:
+        for pair in pairs:
+            if pair["polygon"]:
+                print(
+                    f"[DRY-RUN] {pair['raster']} ← {pair['polygon']} ({pair['match_mode']})",
+                    flush=True,
+                )
+        print(f"[DRY-RUN] Would mask {len(tasks)} tile(s). Re-run without --dry-run to write outputs.")
+        return 0
 
     summaries: list[dict] = []
     workers = max(1, args.workers)
