@@ -19,8 +19,8 @@
 #   cp auxiliares/cluster_paths.to_gee.env.leftraru auxiliares/cluster_paths.env
 #   sbatch auxiliares/run_to_gee_fill_slurm.sh
 #
-# Solo tiles 2017 faltantes (reanudar):
-#   TO_GEE_SLURM_MODE=missing_2017 sbatch auxiliares/run_to_gee_fill_slurm.sh
+# Solo tiles faltantes (cualquier año, skip-existing):
+#   TO_GEE_SLURM_MODE=missing_only sbatch auxiliares/run_to_gee_fill_slurm.sh
 #
 # Un tile: FILL_PATTERN='*r4_2017*vector_masked.tif' sbatch ...
 #
@@ -67,7 +67,7 @@ case "${TO_GEE_SLURM_MODE}" in
     export STEPS="${STEPS:-fill_tiles,fill_merge_years}"
     export FILL_PATTERN="${FILL_PATTERN:-*.tif}"
     export FILL_SKIP_EXISTING="${FILL_SKIP_EXISTING:-0}"
-    export FILL_WORKERS="${FILL_WORKERS:-2}"
+    export FILL_WORKERS="${FILL_WORKERS:-1}"
     ;;
   missing_2017)
     export STEPS="${STEPS:-fill_tiles}"
@@ -75,8 +75,14 @@ case "${TO_GEE_SLURM_MODE}" in
     export FILL_SKIP_EXISTING="${FILL_SKIP_EXISTING:-1}"
     export FILL_WORKERS="${FILL_WORKERS:-1}"
     ;;
+  missing_only)
+    export STEPS="${STEPS:-fill_tiles}"
+    export FILL_PATTERN="${FILL_PATTERN:-*.tif}"
+    export FILL_SKIP_EXISTING="${FILL_SKIP_EXISTING:-1}"
+    export FILL_WORKERS="${FILL_WORKERS:-1}"
+    ;;
   *)
-    echo "ERROR: Unknown TO_GEE_SLURM_MODE=${TO_GEE_SLURM_MODE} (use full or missing_2017)" >&2
+    echo "ERROR: Unknown TO_GEE_SLURM_MODE=${TO_GEE_SLURM_MODE} (use full, missing_2017, missing_only)" >&2
     exit 1
     ;;
 esac

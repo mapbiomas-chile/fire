@@ -151,9 +151,21 @@ if step_enabled "fill_tiles"; then
   "${PYTHON}" "${FILL_ARGS[@]}"
 fi
 
+EXPECTED_TILE_COUNT="${EXPECTED_TILE_COUNT:-52}"
+
+count_tifs() {
+  find "${1}" -maxdepth 1 -name '*.tif' 2>/dev/null | wc -l
+}
+
 if step_enabled "fill_merge_years"; then
   if [[ ! -d "${OUTPUT_BY_TILE_FILLED}" ]]; then
     echo "ERROR: Filled tile output not found: ${OUTPUT_BY_TILE_FILLED}" >&2
+    exit 1
+  fi
+  filled_count="$(count_tifs "${OUTPUT_BY_TILE_FILLED}")"
+  if [[ "${filled_count}" -lt "${EXPECTED_TILE_COUNT}" ]]; then
+    echo "ERROR: fill_merge_years needs ${EXPECTED_TILE_COUNT} tiles in ${OUTPUT_BY_TILE_FILLED}, found ${filled_count}." >&2
+    echo "       Re-run fill_tiles (see auxiliares/run_to_gee_fill_slurm.sh)." >&2
     exit 1
   fi
   mkdir -p "${OUTPUT_BY_YEAR_FILLED}"

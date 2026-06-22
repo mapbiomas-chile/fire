@@ -26,9 +26,10 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
-from rasterio.features import rasterize
+from rasterio.features import rasterize, shapes as rio_shapes
 from rasterio.transform import array_bounds
-from shapely.geometry import box
+from shapely.geometry import box, shape
+from shapely.ops import unary_union
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -190,6 +191,24 @@ def rasterize_shapes(
     )
 
 
+def burn_footprint(burn_mask: np.ndarray, transform) -> object | None:
+    """Vector footprint of existing burn pixels (one union), for fast overlap tests."""
+    geoms = [
+        shape(geom)
+        for geom, val in rio_shapes(
+            burn_mask.astype(np.uint8),
+            transform=transform,
+            connectivity=8,
+        )
+        if val == 1
+    ]
+    if not geoms:
+        return None
+    if len(geoms) == 1:
+        return geoms[0]
+    return unary_union(geoms)
+
+
 def select_reference_shapes(
     gdf: gpd.GeoDataFrame,
     *,
@@ -209,20 +228,23 @@ def select_reference_shapes(
     if clipped.empty:
         return []
 
-    shapes: list[tuple] = []
-    for geom in clipped.geometry:
-        if geom is None or geom.is_empty:
-            continue
-        if require_overlap:
-            feat_mask = rasterize_shapes(
-                [(geom, 1)],
-                out_shape=out_shape,
-                transform=transform,
-            )
-            if not (feat_mask & burn_mask).any():
-                continue
-        shapes.append((geom, 1))
-    return shapes
+    if not require_overlap:
+        return [
+            (geom, 1)
+            for geom in clipped.geometry
+            if geom is not None and not geom.is_empty
+        ]
+
+    footprint = burn_footprint(burn_mask, transform)
+    if footprint is None or footprint.is_empty:
+        return []
+
+    selected = clipped[clipped.intersects(footprint)]
+    return [
+        (geom, 1)
+        for geom in selected.geometry
+        if geom is not None and not geom.is_empty
+    ]
 
 
 def fill_one_raster(
@@ -252,6 +274,10 @@ def fill_one_raster(
         transform=transform,
         crs=crs,
         require_overlap=require_overlap,
+    )
+    print(
+        f"[INFO] {tif_path.name}: {len(shapes)} reference polygon(s) after overlap filter",
+        flush=True,
     )
     ref_mask = rasterize_shapes(
         shapes,
