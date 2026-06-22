@@ -3,3 +3,4 @@
 filtering/cluster_paths.env
 vectorize/cluster_paths.env
 classification/cluster_paths.env
+auxiliares/cluster_paths.env
