@@ -4,31 +4,36 @@
 #SBATCH -J fire_to_gee_fill
 #SBATCH -p main
 #SBATCH -n 1
-#SBATCH -c 8
+#SBATCH -c 16
 #SBATCH --mem=128GB
 #SBATCH --mail-type=ALL
-#SBATCH -t 01:00:00
+#SBATCH -t 08:00:00
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 
-# Relleno con cicatrices de referencia (UNIDOS_13_18) — tiles pesados en cómputo.
-# Requiere auxiliares/cluster_paths.env (cp cluster_paths.to_gee.env.leftraru).
+# Relleno UNIDOS_13_18 (2013–2018) + passthrough 2019–2025 + mosaico Chile.
+# Requiere: ~/fire/auxiliares/cluster_paths.env
 #
-#   cd ~/fire
+# Corrida completa (52 tiles + 13 mosaicos) — por defecto:
+#   cd ~/fire && git pull
 #   cp auxiliares/cluster_paths.to_gee.env.leftraru auxiliares/cluster_paths.env
 #   sbatch auxiliares/run_to_gee_fill_slurm.sh
 #
-# Logs: ~/logs/fire_to_gee_fill_<JOBID>.out y .err
+# Solo tiles 2017 faltantes (reanudar):
+#   TO_GEE_SLURM_MODE=missing_2017 sbatch auxiliares/run_to_gee_fill_slurm.sh
+#
+# Un tile: FILL_PATTERN='*r4_2017*vector_masked.tif' sbatch ...
+#
+# Logs: ~/logs/fire_to_gee_fill_<JOBID>.out  y  .err
 
 set -euo pipefail
 
-# No usar BASH_SOURCE: bajo SLURM el script vive en /var/spool/slurmd/job<id>/
 FIRE_REPO="${REPO_ROOT:-${HOME}/fire}"
 AUX_DIR="${FIRE_REPO}/auxiliares"
 PIPELINE_SCRIPT="${AUX_DIR}/run_to_gee_pipeline.sh"
 PATHS_FILE="${AUXILIARES_PATHS_FILE:-${AUX_DIR}/cluster_paths.env}"
 
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-16}"
 
 echo "============================================="
 echo "toGEE — REFERENCE FILL — NLHPC"
@@ -55,13 +60,33 @@ fi
 source "${PATHS_FILE}"
 
 export REPO_ROOT="${FIRE_REPO}"
-export STEPS="${STEPS:-fill_tiles}"
-export FILL_SKIP_EXISTING="${FILL_SKIP_EXISTING:-1}"
-export FILL_WORKERS="${FILL_WORKERS:-1}"
-export FILL_PATTERN="${FILL_PATTERN:-*2017*vector_masked.tif}"
+
+TO_GEE_SLURM_MODE="${TO_GEE_SLURM_MODE:-full}"
+case "${TO_GEE_SLURM_MODE}" in
+  full)
+    export STEPS="${STEPS:-fill_tiles,fill_merge_years}"
+    export FILL_PATTERN="${FILL_PATTERN:-*.tif}"
+    export FILL_SKIP_EXISTING="${FILL_SKIP_EXISTING:-0}"
+    export FILL_WORKERS="${FILL_WORKERS:-2}"
+    ;;
+  missing_2017)
+    export STEPS="${STEPS:-fill_tiles}"
+    export FILL_PATTERN="${FILL_PATTERN:-*2017*vector_masked.tif}"
+    export FILL_SKIP_EXISTING="${FILL_SKIP_EXISTING:-1}"
+    export FILL_WORKERS="${FILL_WORKERS:-1}"
+    ;;
+  *)
+    echo "ERROR: Unknown TO_GEE_SLURM_MODE=${TO_GEE_SLURM_MODE} (use full or missing_2017)" >&2
+    exit 1
+    ;;
+esac
+
 export PROGRESS_HEARTBEAT_SEC="${PROGRESS_HEARTBEAT_SEC:-60}"
 
 if [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+  export STEPS="${STEPS:-fill_tiles}"
+  export FILL_SKIP_EXISTING="${FILL_SKIP_EXISTING:-1}"
+  export FILL_WORKERS="${FILL_WORKERS:-1}"
   case "${SLURM_ARRAY_TASK_ID}" in
     0) export FILL_PATTERN="*r2_2017*vector_masked.tif" ;;
     1) export FILL_PATTERN="*r4_2017*vector_masked.tif" ;;
@@ -73,6 +98,12 @@ if [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
   esac
   echo "Array task ${SLURM_ARRAY_TASK_ID} → pattern ${FILL_PATTERN}"
 fi
+
+echo "Mode:     ${TO_GEE_SLURM_MODE}"
+echo "STEPS:    ${STEPS}"
+echo "Pattern:  ${FILL_PATTERN}"
+echo "Workers:  ${FILL_WORKERS}"
+echo "Skip existing: ${FILL_SKIP_EXISTING}"
 
 if [[ -z "${PYTHON:-}" ]]; then
   echo "ERROR: PYTHON not set in ${PATHS_FILE}" >&2
@@ -86,9 +117,10 @@ fi
 
 "${PYTHON}" -c "import geopandas, rasterio; print('geopandas/rasterio OK')"
 
-mkdir -p ~/logs "${TO_GEE_ROOT:-$HOME/toGEE}/logs"
+mkdir -p ~/logs "${TO_GEE_ROOT:-$HOME/toGEE}/logs" \
+  "${OUTPUT_BY_TILE_FILLED:-$HOME/toGEE/by_tile_filled}" \
+  "${OUTPUT_BY_YEAR_FILLED:-$HOME/toGEE/by_year_chile_filled}"
 
 cd "${FIRE_REPO}"
-echo "STEPS=${STEPS} FILL_PATTERN=${FILL_PATTERN} FILL_WORKERS=${FILL_WORKERS}"
 bash "${PIPELINE_SCRIPT}"
 exit $?
