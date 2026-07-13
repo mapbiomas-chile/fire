@@ -130,3 +130,41 @@ Salidas:
 | `/home/flepin/toGEE/by_year_chile_filled/` | 13 `chile_burn_p25_filled_<año>.tif` |
 
 Reanudar solo 2017 faltantes: `TO_GEE_SLURM_MODE=missing_2017 sbatch auxiliares/run_to_gee_fill_slurm.sh`
+
+## dNBR expand — crecimiento conectado 2019–2025
+
+Expande cicatrices binarias confiables (`~/classification_20260713/`) usando **componentes conectados** sobre `original_scar OR (dNBR >= 0.10)`. Solo se conservan componentes que tocan la cicatriz original. Sin buffer geométrico, radio máximo ni límite de iteraciones. Banda dNBR = 13. Regiones `r1 r2 r4 r6`, años 2019–2025.
+
+```text
+classification_20260713/b14_chile_{region}_{year}_classified_filtered_v6.tif
+    + mosaics_cog/b14_chile_{region}_{year}_cog.tif  (banda 13 = dNBR)
+        → traversable = scar OR (valid & dNBR>=0.10)
+        → label (8-connectivity); keep components that touch scar
+        → ~/classification_20260713_dnbr_expanded/
+```
+
+```bash
+# Dry-run
+python auxiliares/expand_scar_from_dnbr.py --dry-run
+
+# Una región/año
+python auxiliares/expand_scar_from_dnbr.py --regions r1 --from-year 2019 --to-year 2019
+
+# Corrida completa en SLURM (máx. 1 h, 64 GB)
+cd ~/fire && git pull
+mkdir -p ~/logs
+sbatch auxiliares/run_expand_scar_dnbr_slurm.sh
+tail -f ~/logs/fire_dnbr_expand_<JOBID>.out
+```
+
+Salidas:
+
+- `*_dnbr_expanded.tif` — cicatriz final (original + conectados)
+- `*_dnbr_added.tif` — solo píxeles nuevos
+- `expand_stats.csv` — estadísticas por región × año
+
+| Parámetro | Default |
+|-----------|---------|
+| `--dnbr-band` | 13 |
+| `--min-dnbr` | 0.10 |
+| conectividad | 8 (`np.ones((3,3))`) |
