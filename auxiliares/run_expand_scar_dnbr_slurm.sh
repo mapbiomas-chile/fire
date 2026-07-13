@@ -1,7 +1,7 @@
 #!/bin/bash
 #---------------Script SBATCH - NLHPC ----------------
-# Expand scars 2019–2025 via connected dNBR growth (GEE-like).
-# threshold = max(p10(dNBR|scar), MIN_DNBR=0.10); regions r1 r2 r4 r6.
+# Expand scars 2019–2025 via connected dNBR growth.
+# Per cicatriz: thr_i = max(p10(dNBR|scar_i), MIN_DNBR=0.10); regions r1 r2 r4 r6.
 #
 #   cd ~/fire && git pull
 #   mkdir -p ~/logs
@@ -42,6 +42,7 @@ TO_YEAR="${EXPAND_TO_YEAR:-2025}"
 DNBR_BAND="${EXPAND_DNBR_BAND:-13}"
 DNBR_PERCENTILE="${EXPAND_DNBR_PERCENTILE:-10}"
 MIN_DNBR="${EXPAND_MIN_DNBR:-0.10}"
+THRESHOLD_MODE="${EXPAND_THRESHOLD_MODE:-per_component}"
 SKIP_EXISTING="${EXPAND_SKIP_EXISTING:-0}"
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
@@ -56,7 +57,7 @@ echo "Mosaics:   ${MOSAIC_DIR}"
 echo "Output:    ${OUTPUT_DIR}"
 echo "Regions:   ${REGIONS}"
 echo "Years:     ${FROM_YEAR}–${TO_YEAR}"
-echo "dNBR band: ${DNBR_BAND} | p${DNBR_PERCENTILE} | min_dnbr=${MIN_DNBR}"
+echo "dNBR band: ${DNBR_BAND} | p${DNBR_PERCENTILE} | min_dnbr=${MIN_DNBR} | mode=${THRESHOLD_MODE}"
 echo "Job id:    ${SLURM_JOB_ID:-local}"
 echo "============================================="
 
@@ -99,6 +100,7 @@ cmd=(
   --dnbr-band "${DNBR_BAND}"
   --dnbr-percentile "${DNBR_PERCENTILE}"
   --min-dnbr "${MIN_DNBR}"
+  --threshold-mode "${THRESHOLD_MODE}"
   --stats-csv "${OUTPUT_DIR}/expand_stats.csv"
 )
 
