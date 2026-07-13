@@ -1,9 +1,16 @@
 #!/bin/bash
 #---------------Script SBATCH - NLHPC ----------------
-# Expand scars 2019–2025 via connected dNBR >= 0.10 (regions r1 r2 r4 r6).
+# Expand scars 2019–2025 via connected dNBR growth (GEE-like).
+# threshold = max(p10(dNBR|scar), MIN_DNBR=0.10); regions r1 r2 r4 r6.
 #
 #   cd ~/fire && git pull
 #   mkdir -p ~/logs
+#
+#   # Limpiar corrida anterior (umbral fijo):
+#   rm -rf ~/classification_20260713_dnbr_expanded
+#   # o backup:
+#   # mv ~/classification_20260713_dnbr_expanded ~/classification_20260713_dnbr_expanded_fixed010_bak
+#
 #   sbatch auxiliares/run_expand_scar_dnbr_slurm.sh
 #
 # Logs: ~/logs/fire_dnbr_expand_<JOBID>.out  y  .err
@@ -33,13 +40,14 @@ REGIONS="${EXPAND_REGIONS:-r1 r2 r4 r6}"
 FROM_YEAR="${EXPAND_FROM_YEAR:-2019}"
 TO_YEAR="${EXPAND_TO_YEAR:-2025}"
 DNBR_BAND="${EXPAND_DNBR_BAND:-13}"
+DNBR_PERCENTILE="${EXPAND_DNBR_PERCENTILE:-10}"
 MIN_DNBR="${EXPAND_MIN_DNBR:-0.10}"
 SKIP_EXISTING="${EXPAND_SKIP_EXISTING:-0}"
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 
 echo "============================================="
-echo "dNBR EXPAND — NLHPC"
+echo "dNBR EXPAND — NLHPC (GEE-like)"
 echo "============================================="
 echo "Repo:      ${FIRE_REPO}"
 echo "Script:    ${SCRIPT}"
@@ -48,7 +56,7 @@ echo "Mosaics:   ${MOSAIC_DIR}"
 echo "Output:    ${OUTPUT_DIR}"
 echo "Regions:   ${REGIONS}"
 echo "Years:     ${FROM_YEAR}–${TO_YEAR}"
-echo "dNBR band: ${DNBR_BAND} | min_dnbr=${MIN_DNBR}"
+echo "dNBR band: ${DNBR_BAND} | p${DNBR_PERCENTILE} | min_dnbr=${MIN_DNBR}"
 echo "Job id:    ${SLURM_JOB_ID:-local}"
 echo "============================================="
 
@@ -89,6 +97,7 @@ cmd=(
   --from-year "${FROM_YEAR}"
   --to-year "${TO_YEAR}"
   --dnbr-band "${DNBR_BAND}"
+  --dnbr-percentile "${DNBR_PERCENTILE}"
   --min-dnbr "${MIN_DNBR}"
   --stats-csv "${OUTPUT_DIR}/expand_stats.csv"
 )

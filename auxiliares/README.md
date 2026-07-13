@@ -131,15 +131,23 @@ Salidas:
 
 Reanudar solo 2017 faltantes: `TO_GEE_SLURM_MODE=missing_2017 sbatch auxiliares/run_to_gee_fill_slurm.sh`
 
-## dNBR expand — crecimiento conectado 2019–2025
+## dNBR expand — crecimiento conectado 2019–2025 (estilo GEE)
 
-Expande cicatrices binarias confiables (`~/classification_20260713/`) usando **componentes conectados** sobre `original_scar OR (dNBR >= 0.10)`. Solo se conservan componentes que tocan la cicatriz original. Sin buffer geométrico, radio máximo ni límite de iteraciones. Banda dNBR = 13. Regiones `r1 r2 r4 r6`, años 2019–2025.
+Expande cicatrices binarias confiables (`~/classification_20260713/`) con la misma lógica del Code Editor:
+
+1. `threshold = max(p10(dNBR | cicatriz), 0.10)`
+2. candidatos = dNBR válido ≥ threshold
+3. crecimiento por componentes conectados (8) sobre `scar OR candidatos` (= `cumulativeCost` de GEE)
+4. solo se conservan componentes que tocan la cicatriz original
+
+Sin buffer geométrico. Banda dNBR = 13. Regiones `r1 r2 r4 r6`, años 2019–2025.
 
 ```text
 classification_20260713/b14_chile_{region}_{year}_classified_filtered_v6.tif
     + mosaics_cog/b14_chile_{region}_{year}_cog.tif  (banda 13 = dNBR)
-        → traversable = scar OR (valid & dNBR>=0.10)
-        → label (8-connectivity); keep components that touch scar
+        → thr = max(p10(scar), 0.10)
+        → traversable = scar OR (valid & dNBR>=thr)
+        → label 8-conn; keep components that touch scar
         → ~/classification_20260713_dnbr_expanded/
 ```
 
@@ -153,6 +161,13 @@ python auxiliares/expand_scar_from_dnbr.py --regions r1 --from-year 2019 --to-ye
 # Corrida completa en SLURM (máx. 1 h, 64 GB)
 cd ~/fire && git pull
 mkdir -p ~/logs
+
+# Borrar/renombrar salida de la corrida anterior (umbral fijo) antes de relanzar
+# Opción A — borrar todo:
+rm -rf ~/classification_20260713_dnbr_expanded
+# Opción B — conservar backup:
+# mv ~/classification_20260713_dnbr_expanded ~/classification_20260713_dnbr_expanded_fixed010_bak
+
 sbatch auxiliares/run_expand_scar_dnbr_slurm.sh
 tail -f ~/logs/fire_dnbr_expand_<JOBID>.out
 ```
@@ -161,10 +176,11 @@ Salidas:
 
 - `*_dnbr_expanded.tif` — cicatriz final (original + conectados)
 - `*_dnbr_added.tif` — solo píxeles nuevos
-- `expand_stats.csv` — estadísticas por región × año
+- `expand_stats.csv` — umbral usado, conteos, hectáreas y % de aumento
 
-| Parámetro | Default |
-|-----------|---------|
-| `--dnbr-band` | 13 |
-| `--min-dnbr` | 0.10 |
-| conectividad | 8 (`np.ones((3,3))`) |
+| Parámetro | Default | GEE |
+|-----------|---------|-----|
+| `--dnbr-band` | 13 | `b13` |
+| `--dnbr-percentile` | 10 | `DNBR_PERCENTILE` |
+| `--min-dnbr` | 0.10 | floor (antes 0.05 en GEE) |
+| conectividad | 8 | `cumulativeCost` |
