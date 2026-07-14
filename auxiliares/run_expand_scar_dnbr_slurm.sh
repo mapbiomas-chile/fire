@@ -1,17 +1,14 @@
 #!/bin/bash
 #---------------Script SBATCH - NLHPC ----------------
 # Expand scars 2019–2025 via connected dNBR growth (GEE-like).
-# threshold = max(p10(dNBR|scar), MIN_DNBR=0.10); regions r1 r2 r4 r6.
+# threshold = max(p10(dNBR|scar), MIN_DNBR); default floor 0.10.
+# Overrides 0.15: r1/2021, r2/2019, r2/2022, r2/2023, r4/2019, r6/2019
 #
-#   cd ~/fire && git pull
-#   mkdir -p ~/logs
-#
-#   # Limpiar corrida anterior (umbral fijo):
-#   rm -rf ~/classification_20260713_dnbr_expanded
-#   # o backup:
-#   # mv ~/classification_20260713_dnbr_expanded ~/classification_20260713_dnbr_expanded_fixed010_bak
-#
+# Corrida completa:
 #   sbatch auxiliares/run_expand_scar_dnbr_slurm.sh
+#
+# Solo tiles con override 0.15 (recomendado si el resto ya está OK):
+#   EXPAND_MODE=overrides_only sbatch auxiliares/run_expand_scar_dnbr_slurm.sh
 #
 # Logs: ~/logs/fire_dnbr_expand_<JOBID>.out  y  .err
 # Salidas: ~/classification_20260713_dnbr_expanded/
@@ -42,6 +39,7 @@ TO_YEAR="${EXPAND_TO_YEAR:-2025}"
 DNBR_BAND="${EXPAND_DNBR_BAND:-13}"
 DNBR_PERCENTILE="${EXPAND_DNBR_PERCENTILE:-10}"
 MIN_DNBR="${EXPAND_MIN_DNBR:-0.10}"
+EXPAND_MODE="${EXPAND_MODE:-full}"
 SKIP_EXISTING="${EXPAND_SKIP_EXISTING:-0}"
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
@@ -54,6 +52,7 @@ echo "Script:    ${SCRIPT}"
 echo "Class dir: ${CLASS_DIR}"
 echo "Mosaics:   ${MOSAIC_DIR}"
 echo "Output:    ${OUTPUT_DIR}"
+echo "Mode:      ${EXPAND_MODE}"
 echo "Regions:   ${REGIONS}"
 echo "Years:     ${FROM_YEAR}–${TO_YEAR}"
 echo "dNBR band: ${DNBR_BAND} | p${DNBR_PERCENTILE} | min_dnbr=${MIN_DNBR}"
@@ -102,6 +101,9 @@ cmd=(
   --stats-csv "${OUTPUT_DIR}/expand_stats.csv"
 )
 
+if [[ "${EXPAND_MODE}" == "overrides_only" ]]; then
+  cmd+=(--only-override-tiles)
+fi
 if [[ "${SKIP_EXISTING}" == "1" ]]; then
   cmd+=(--skip-existing)
 fi
