@@ -47,6 +47,47 @@ DNBR_PERCENTILE = 10
 MIN_DNBR = 0.10
 CONNECTIVITY_STRUCTURE = np.ones((3, 3), dtype=np.uint8)
 
+# Stricter floor for tiles that over-expanded with min_dnbr=0.10
+DEFAULT_MIN_DNBR_OVERRIDES: dict[tuple[str, int], float] = {
+    ("r1", 2021): 0.15,
+    ("r2", 2019): 0.15,
+    ("r2", 2022): 0.15,
+    ("r2", 2023): 0.15,
+    ("r4", 2019): 0.15,
+    ("r6", 2019): 0.15,
+}
+
+
+def parse_min_dnbr_overrides(text: str | None) -> dict[tuple[str, int], float]:
+    """Parse ``r1:2021:0.15,r2:2019:0.15`` into {(region, year): value}."""
+    if text is None or not str(text).strip():
+        return dict(DEFAULT_MIN_DNBR_OVERRIDES)
+    out: dict[tuple[str, int], float] = {}
+    for part in str(text).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        bits = part.split(":")
+        if len(bits) != 3:
+            raise ValueError(
+                f"Invalid --min-dnbr-override entry '{part}' "
+                "(expected region:year:value, e.g. r1:2021:0.15)"
+            )
+        region, year_s, value_s = bits
+        region = region if region.startswith("r") else f"r{region}"
+        out[(region, int(year_s))] = float(value_s)
+    return out
+
+
+def effective_min_dnbr(
+    region: str,
+    year: int,
+    *,
+    default: float,
+    overrides: dict[tuple[str, int], float],
+) -> float:
+    return float(overrides.get((region, year), default))
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -111,6 +152,20 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=MIN_DNBR,
         help=f"Floor for the growth threshold (default: {MIN_DNBR}).",
+    )
+    parser.add_argument(
+        "--min-dnbr-override",
+        default=None,
+        help=(
+            "Comma-separated region:year:value overrides "
+            "(default built-in: r1:2021,r2:2019,r2:2022,r2:2023,r4:2019,r6:2019 → 0.15). "
+            "Pass empty string to disable overrides."
+        ),
+    )
+    parser.add_argument(
+        "--only-override-tiles",
+        action="store_true",
+        help="Process only region/year tiles present in min-dnbr overrides.",
     )
     parser.add_argument(
         "--class-pattern",
@@ -472,65 +527,105 @@ def process_one(
 
 def main() -> int:
     args = parse_args()
-    years = range(args.from_year, args.to_year + 1)
+    # Explicit empty string disables overrides; None keeps defaults.
+    if args.min_dnbr_override is not None and args.min_dnbr_override.strip() == "":
+        overrides: dict[tuple[str, int], float] = {}
+    else:
+        overrides = parse_min_dnbr_overrides(args.min_dnbr_override)
+
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     stats_csv = args.stats_csv or (output_dir / "expand_stats.csv")
 
+    if args.only_override_tiles:
+        if not overrides:
+            logger.error("--only-override-tiles requires at least one min-dnbr override")
+            return 1
+        jobs = sorted(overrides.keys())
+    else:
+        years = range(args.from_year, args.to_year + 1)
+        jobs = []
+        for region in args.regions:
+            region = region if str(region).startswith("r") else f"r{region}"
+            for year in years:
+                jobs.append((region, year))
+
     logger.info("class-dir   : %s", args.class_dir)
     logger.info("mosaic-dir  : %s", args.mosaic_dir)
     logger.info("output-dir  : %s", output_dir)
-    logger.info("regions     : %s", ", ".join(args.regions))
-    logger.info("years       : %d–%d", args.from_year, args.to_year)
+    logger.info("jobs        : %d", len(jobs))
     logger.info(
         "dNBR band=%d | percentile=%.0f | min_dnbr=%.3f | connectivity=8",
         args.dnbr_band,
         args.dnbr_percentile,
         args.min_dnbr,
     )
+    if overrides:
+        logger.info(
+            "min_dnbr overrides (%d): %s",
+            len(overrides),
+            ", ".join(f"{r}/{y}={v:.2f}" for (r, y), v in sorted(overrides.items())),
+        )
 
     rows: list[dict] = []
-    for region in args.regions:
-        region = region if str(region).startswith("r") else f"r{region}"
-        for year in years:
-            try:
-                row = process_one(
-                    region=region,
-                    year=year,
-                    class_dir=args.class_dir,
-                    mosaic_dir=args.mosaic_dir,
-                    output_dir=output_dir,
-                    class_pattern=args.class_pattern,
-                    mosaic_pattern=args.mosaic_pattern,
-                    dnbr_band=args.dnbr_band,
-                    dnbr_percentile=args.dnbr_percentile,
-                    min_dnbr=args.min_dnbr,
-                    skip_existing=args.skip_existing,
-                    dry_run=args.dry_run,
-                )
-            except Exception:
-                logger.exception("Failed %s %s", region, year)
-                row = {
-                    "region": region,
-                    "year": year,
-                    "status": "error",
-                }
-            if row is not None:
-                rows.append(row)
+    for region, year in jobs:
+        min_dnbr = effective_min_dnbr(
+            region, year, default=args.min_dnbr, overrides=overrides
+        )
+        try:
+            row = process_one(
+                region=region,
+                year=year,
+                class_dir=args.class_dir,
+                mosaic_dir=args.mosaic_dir,
+                output_dir=output_dir,
+                class_pattern=args.class_pattern,
+                mosaic_pattern=args.mosaic_pattern,
+                dnbr_band=args.dnbr_band,
+                dnbr_percentile=args.dnbr_percentile,
+                min_dnbr=min_dnbr,
+                skip_existing=args.skip_existing,
+                dry_run=args.dry_run,
+            )
+        except Exception:
+            logger.exception("Failed %s %s", region, year)
+            row = {
+                "region": region,
+                "year": year,
+                "status": "error",
+                "min_dnbr": min_dnbr,
+            }
+        if row is not None:
+            rows.append(row)
 
-    df = pd.DataFrame(rows)
+    df_new = pd.DataFrame(rows)
     if not args.dry_run:
+        if stats_csv.is_file() and args.only_override_tiles and not df_new.empty:
+            df_old = pd.read_csv(stats_csv)
+            key_cols = ["region", "year"]
+            if set(key_cols).issubset(df_old.columns):
+                mask = pd.Series(False, index=df_old.index)
+                for region, year in jobs:
+                    mask |= (df_old["region"] == region) & (df_old["year"] == year)
+                df = pd.concat([df_old.loc[~mask], df_new], ignore_index=True)
+                df = df.sort_values(key_cols).reset_index(drop=True)
+            else:
+                df = df_new
+        else:
+            df = df_new
         df.to_csv(stats_csv, index=False)
         logger.info("Stats written to %s", stats_csv)
+    else:
+        df = df_new
 
-    n_ok = int((df["status"] == "ok").sum()) if not df.empty else 0
-    n_err = int((df["status"] == "error").sum()) if not df.empty else 0
+    n_ok = int((df_new["status"] == "ok").sum()) if not df_new.empty else 0
+    n_err = int((df_new["status"] == "error").sum()) if not df_new.empty else 0
     n_miss = (
-        int(df["status"].isin(["missing_class", "missing_mosaic"]).sum())
-        if not df.empty
+        int(df_new["status"].isin(["missing_class", "missing_mosaic"]).sum())
+        if not df_new.empty
         else 0
     )
-    logger.info("Done: ok=%d errors=%d missing=%d total=%d", n_ok, n_err, n_miss, len(df))
+    logger.info("Done: ok=%d errors=%d missing=%d total=%d", n_ok, n_err, n_miss, len(df_new))
     return 1 if n_err else 0
 
 

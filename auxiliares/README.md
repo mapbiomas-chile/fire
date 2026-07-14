@@ -135,52 +135,46 @@ Reanudar solo 2017 faltantes: `TO_GEE_SLURM_MODE=missing_2017 sbatch auxiliares/
 
 Expande cicatrices binarias confiables (`~/classification_20260713/`) con la misma lógica del Code Editor:
 
-1. `threshold = max(p10(dNBR | cicatriz), 0.10)`
+1. `threshold = max(p10(dNBR | cicatriz), min_dnbr)`
 2. candidatos = dNBR válido ≥ threshold
 3. crecimiento por componentes conectados (8) sobre `scar OR candidatos` (= `cumulativeCost` de GEE)
 4. solo se conservan componentes que tocan la cicatriz original
 
-Sin buffer geométrico. Banda dNBR = 13. Regiones `r1 r2 r4 r6`, años 2019–2025.
-
-```text
-classification_20260713/b14_chile_{region}_{year}_classified_filtered_v6.tif
-    + mosaics_cog/b14_chile_{region}_{year}_cog.tif  (banda 13 = dNBR)
-        → thr = max(p10(scar), 0.10)
-        → traversable = scar OR (valid & dNBR>=thr)
-        → label 8-conn; keep components that touch scar
-        → ~/classification_20260713_dnbr_expanded/
-```
+`min_dnbr` default = **0.10**. Tiles que sobreexpandían usan floor **0.15**:
+`r1/2021`, `r2/2019`, `r2/2022`, `r2/2023`, `r4/2019`, `r6/2019`.
 
 ```bash
-# Dry-run
-python auxiliares/expand_scar_from_dnbr.py --dry-run
-
-# Una región/año
-python auxiliares/expand_scar_from_dnbr.py --regions r1 --from-year 2019 --to-year 2019
-
-# Corrida completa en SLURM (máx. 1 h, 64 GB)
+# Solo rehacer los 6 tiles con floor 0.15 (dejar el resto intacto)
 cd ~/fire && git pull
-mkdir -p ~/logs
+OUT=~/classification_20260713_dnbr_expanded
+rm -f \
+  ${OUT}/b14_chile_r1_2021_classified_filtered_v6_dnbr_*.tif \
+  ${OUT}/b14_chile_r2_2019_classified_filtered_v6_dnbr_*.tif \
+  ${OUT}/b14_chile_r2_2022_classified_filtered_v6_dnbr_*.tif \
+  ${OUT}/b14_chile_r2_2023_classified_filtered_v6_dnbr_*.tif \
+  ${OUT}/b14_chile_r4_2019_classified_filtered_v6_dnbr_*.tif \
+  ${OUT}/b14_chile_r6_2019_classified_filtered_v6_dnbr_*.tif
 
-# Borrar/renombrar salida de la corrida anterior (umbral fijo) antes de relanzar
-# Opción A — borrar todo:
-rm -rf ~/classification_20260713_dnbr_expanded
-# Opción B — conservar backup:
-# mv ~/classification_20260713_dnbr_expanded ~/classification_20260713_dnbr_expanded_fixed010_bak
+EXPAND_MODE=overrides_only sbatch auxiliares/run_expand_scar_dnbr_slurm.sh
+```
 
+Corrida completa:
+
+```bash
 sbatch auxiliares/run_expand_scar_dnbr_slurm.sh
-tail -f ~/logs/fire_dnbr_expand_<JOBID>.out
 ```
 
 Salidas:
 
 - `*_dnbr_expanded.tif` — cicatriz final (original + conectados)
 - `*_dnbr_added.tif` — solo píxeles nuevos
-- `expand_stats.csv` — umbral usado, conteos, hectáreas y % de aumento
+- `expand_stats.csv` — umbral usado (`min_dnbr` efectivo), conteos, hectáreas
 
-| Parámetro | Default | GEE |
-|-----------|---------|-----|
-| `--dnbr-band` | 13 | `b13` |
-| `--dnbr-percentile` | 10 | `DNBR_PERCENTILE` |
-| `--min-dnbr` | 0.10 | floor (antes 0.05 en GEE) |
-| conectividad | 8 | `cumulativeCost` |
+| Parámetro | Default |
+|-----------|---------|
+| `--dnbr-band` | 13 |
+| `--dnbr-percentile` | 10 |
+| `--min-dnbr` | 0.10 |
+| overrides | 6 tiles → 0.15 |
+| `--only-override-tiles` | procesa solo esos 6 |
+| conectividad | 8 |
