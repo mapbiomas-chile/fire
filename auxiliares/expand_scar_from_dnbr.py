@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Expand existing burn scars using connected dNBR candidates.
+Expand existing burn scars using connected dNBR candidates (GEE-like).
 
-Threshold from scar pixels (same idea as GEE):
-  thr = max(percentile(dNBR | scar), MIN_DNBR)
+Matches the Code Editor logic:
+  threshold = max(p{DNBR_PERCENTILE}(dNBR | original_scar), MIN_DNBR)
+  candidates = valid dNBR >= threshold
+  grow via 8-connected components on (original OR candidates)
+  keep only components that touch a seed.
 
-By default the percentile is computed **per original scar component**
-so each fire grows with its own spectral barrier. Optional ``global``
-mode uses one threshold for the whole region×year tile.
-
-Growth: 8-connected components on (seed OR candidates), keep only
-components that touch the seed. Floor MIN_DNBR = 0.10.
+Equivalent to cumulativeCost on a unit-cost traversable surface.
+No geometric buffer. MIN_DNBR floor = 0.10.
 """
 
 from __future__ import annotations
@@ -112,15 +111,6 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=MIN_DNBR,
         help=f"Floor for the growth threshold (default: {MIN_DNBR}).",
-    )
-    parser.add_argument(
-        "--threshold-mode",
-        choices=("per_component", "global"),
-        default="per_component",
-        help=(
-            "per_component: threshold from each original scar (recommended). "
-            "global: one threshold for the whole tile (previous GEE-style)."
-        ),
     )
     parser.add_argument(
         "--class-pattern",
@@ -248,102 +238,50 @@ def expand_scar_connected(
     dnbr: np.ndarray,
     valid_dnbr: np.ndarray,
     *,
-    percentile: float,
-    min_dnbr: float,
-    threshold_mode: str = "per_component",
+    threshold: float,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """
-    Connected-component expansion with scar-derived dNBR thresholds.
+    Connected-component expansion (cumulativeCost equivalent).
 
-    per_component: each original scar uses thr_i = max(p(dNBR|scar_i), min_dnbr).
-    global: one thr for the whole tile, then label once (GEE reduceRegion style).
+    traversable = original_scar OR (valid & dnbr >= threshold)
+    Keep only components that contain at least one original_scar pixel.
     """
     original = original_scar.astype(bool)
-    if not original.any():
-        empty = original.copy()
-        return empty.astype(np.uint8), empty.astype(np.uint8), {
-            "threshold_mode": threshold_mode,
-            "n_scar_components": 0,
-            "dnbr_threshold": float(min_dnbr),
-            "dnbr_threshold_min": float(min_dnbr),
-            "dnbr_threshold_median": float(min_dnbr),
-            "dnbr_threshold_max": float(min_dnbr),
-            "dnbr_ge_threshold": 0,
+    dnbr_candidate = valid_dnbr & (dnbr >= threshold)
+    traversable = original | dnbr_candidate
+
+    labels, _n_labels = ndimage.label(traversable, structure=CONNECTIVITY_STRUCTURE)
+    seed_labels = np.unique(labels[original])
+    seed_labels = seed_labels[seed_labels != 0]
+
+    if seed_labels.size == 0:
+        expanded = original.copy()
+        added = np.zeros_like(original)
+        stats = {
+            "dnbr_threshold": float(threshold),
+            "dnbr_ge_threshold": int(dnbr_candidate.sum()),
             "connected_candidates": 0,
             "pixels_added": 0,
         }
+        return expanded.astype(np.uint8), added.astype(np.uint8), stats
 
-    if threshold_mode == "global":
-        threshold = compute_dnbr_threshold(
-            original, dnbr, valid_dnbr, percentile=percentile, min_dnbr=min_dnbr
-        )
-        dnbr_candidate = valid_dnbr & (dnbr >= threshold)
-        traversable = original | dnbr_candidate
-        labels, _ = ndimage.label(traversable, structure=CONNECTIVITY_STRUCTURE)
-        seed_labels = np.unique(labels[original])
-        seed_labels = seed_labels[seed_labels != 0]
-        connected = np.isin(labels, seed_labels) if seed_labels.size else original
-        expanded = original | connected
-        added = expanded & ~original
-        if added.any() and not np.all(dnbr_candidate[added]):
-            raise RuntimeError("Added pixels below global dNBR threshold")
-        return expanded.astype(np.uint8), added.astype(np.uint8), {
-            "threshold_mode": "global",
-            "n_scar_components": int(
-                ndimage.label(original, structure=CONNECTIVITY_STRUCTURE)[1]
-            ),
-            "dnbr_threshold": float(threshold),
-            "dnbr_threshold_min": float(threshold),
-            "dnbr_threshold_median": float(threshold),
-            "dnbr_threshold_max": float(threshold),
-            "dnbr_ge_threshold": int(dnbr_candidate.sum()),
-            "connected_candidates": int((connected & dnbr_candidate).sum()),
-            "pixels_added": int(added.sum()),
-        }
-
-    # --- per original scar component ---
-    seed_labels_map, n_seeds = ndimage.label(original, structure=CONNECTIVITY_STRUCTURE)
-    expanded = original.copy()
-    thresholds: list[float] = []
-    candidate_union = np.zeros_like(original, dtype=bool)
-
-    for seed_id in range(1, n_seeds + 1):
-        seed_mask = seed_labels_map == seed_id
-        thr_i = compute_dnbr_threshold(
-            seed_mask, dnbr, valid_dnbr, percentile=percentile, min_dnbr=min_dnbr
-        )
-        thresholds.append(thr_i)
-        candidates_i = valid_dnbr & (dnbr >= thr_i)
-        candidate_union |= candidates_i
-        traversable_i = seed_mask | candidates_i
-        labels_i, _ = ndimage.label(traversable_i, structure=CONNECTIVITY_STRUCTURE)
-        touch = np.unique(labels_i[seed_mask])
-        touch = touch[touch != 0]
-        if touch.size == 0:
-            continue
-        grown_i = np.isin(labels_i, touch)
-        # Never steal with pixels below this scar's thr (already enforced by traversable)
-        expanded |= grown_i
-
+    connected_to_scar = np.isin(labels, seed_labels)
+    expanded = original | connected_to_scar
     added = expanded & ~original
-    if added.any():
-        if not np.all(valid_dnbr[added]):
-            raise RuntimeError("Added pixels include dNBR NoData")
-        if not np.all(dnbr[added] >= min_dnbr):
-            raise RuntimeError(f"Added pixels below MIN_DNBR floor {min_dnbr}")
 
-    thr_arr = np.asarray(thresholds, dtype=np.float64)
-    return expanded.astype(np.uint8), added.astype(np.uint8), {
-        "threshold_mode": "per_component",
-        "n_scar_components": int(n_seeds),
-        "dnbr_threshold": float(np.median(thr_arr)),
-        "dnbr_threshold_min": float(thr_arr.min()),
-        "dnbr_threshold_median": float(np.median(thr_arr)),
-        "dnbr_threshold_max": float(thr_arr.max()),
-        "dnbr_ge_threshold": int(candidate_union.sum()),
-        "connected_candidates": int(added.sum()),  # added are the connected new candidates
+    if added.any() and not np.all(dnbr_candidate[added]):
+        bad = int((added & ~dnbr_candidate).sum())
+        raise RuntimeError(
+            f"Internal error: {bad} added pixels fail dNBR >= {threshold}"
+        )
+
+    stats = {
+        "dnbr_threshold": float(threshold),
+        "dnbr_ge_threshold": int(dnbr_candidate.sum()),
+        "connected_candidates": int((connected_to_scar & dnbr_candidate).sum()),
         "pixels_added": int(added.sum()),
     }
+    return expanded.astype(np.uint8), added.astype(np.uint8), stats
 
 
 def validate_expansion(
@@ -353,7 +291,7 @@ def validate_expansion(
     dnbr: np.ndarray,
     valid_dnbr: np.ndarray,
     *,
-    min_dnbr: float,
+    threshold: float,
 ) -> None:
     original_b = original.astype(bool)
     expanded_b = expanded.astype(bool)
@@ -370,8 +308,8 @@ def validate_expansion(
     if added_b.any():
         if not np.all(valid_dnbr[added_b]):
             raise AssertionError("Some added pixels are dNBR NoData")
-        if not np.all(dnbr[added_b] >= min_dnbr):
-            raise AssertionError(f"Some added pixels have dNBR < floor {min_dnbr}")
+        if not np.all(dnbr[added_b] >= threshold):
+            raise AssertionError(f"Some added pixels have dNBR < threshold {threshold}")
 
 
 def write_uint8_mask(
@@ -409,7 +347,6 @@ def process_one(
     dnbr_band: int,
     dnbr_percentile: float,
     min_dnbr: float,
-    threshold_mode: str,
     skip_existing: bool,
     dry_run: bool,
 ) -> dict | None:
@@ -457,13 +394,18 @@ def process_one(
         original = read_classification_on_mosaic_grid(class_path, mosaic_src)
         dnbr, valid_dnbr = read_valid_dnbr(mosaic_src, dnbr_band)
 
-        expanded, added, grow_stats = expand_scar_connected(
+        threshold = compute_dnbr_threshold(
             original,
             dnbr,
             valid_dnbr,
             percentile=dnbr_percentile,
             min_dnbr=min_dnbr,
-            threshold_mode=threshold_mode,
+        )
+        expanded, added, grow_stats = expand_scar_connected(
+            original,
+            dnbr,
+            valid_dnbr,
+            threshold=threshold,
         )
         validate_expansion(
             original,
@@ -471,7 +413,7 @@ def process_one(
             added,
             dnbr,
             valid_dnbr,
-            min_dnbr=min_dnbr,
+            threshold=threshold,
         )
 
         write_uint8_mask(expanded_path, expanded, profile_template=profile)
@@ -491,14 +433,9 @@ def process_one(
     row.update(
         {
             "status": "ok",
-            "threshold_mode": grow_stats["threshold_mode"],
             "dnbr_percentile": dnbr_percentile,
             "min_dnbr": min_dnbr,
-            "n_scar_components": grow_stats["n_scar_components"],
             "dnbr_threshold": grow_stats["dnbr_threshold"],
-            "dnbr_threshold_min": grow_stats["dnbr_threshold_min"],
-            "dnbr_threshold_median": grow_stats["dnbr_threshold_median"],
-            "dnbr_threshold_max": grow_stats["dnbr_threshold_max"],
             "pixels_original": original_px,
             "pixels_dnbr_ge_threshold": grow_stats["dnbr_ge_threshold"],
             "pixels_connected_candidates": grow_stats["connected_candidates"],
@@ -513,18 +450,16 @@ def process_one(
     )
 
     logger.info(
-        "%s %s | mode=%s scars=%d thr med=%.4f [%.4f–%.4f] (p%.0f floor=%.2f) | "
-        "orig=%d added=%d final=%d | ha: %.2f + %.2f = %.2f (%%+%.1f)",
+        "%s %s | thr=%.4f (p%.0f floor=%.2f) | orig=%d cand=%d connected=%d "
+        "added=%d final=%d | ha: %.2f + %.2f = %.2f (%%+%.1f)",
         region,
         year,
-        grow_stats["threshold_mode"],
-        grow_stats["n_scar_components"],
-        grow_stats["dnbr_threshold_median"],
-        grow_stats["dnbr_threshold_min"],
-        grow_stats["dnbr_threshold_max"],
+        grow_stats["dnbr_threshold"],
         dnbr_percentile,
         min_dnbr,
         original_px,
+        grow_stats["dnbr_ge_threshold"],
+        grow_stats["connected_candidates"],
         added_px,
         final_px,
         area_orig_ha,
@@ -548,9 +483,8 @@ def main() -> int:
     logger.info("regions     : %s", ", ".join(args.regions))
     logger.info("years       : %d–%d", args.from_year, args.to_year)
     logger.info(
-        "dNBR band=%d | mode=%s | percentile=%.0f | min_dnbr=%.3f | connectivity=8",
+        "dNBR band=%d | percentile=%.0f | min_dnbr=%.3f | connectivity=8",
         args.dnbr_band,
-        args.threshold_mode,
         args.dnbr_percentile,
         args.min_dnbr,
     )
@@ -571,7 +505,6 @@ def main() -> int:
                     dnbr_band=args.dnbr_band,
                     dnbr_percentile=args.dnbr_percentile,
                     min_dnbr=args.min_dnbr,
-                    threshold_mode=args.threshold_mode,
                     skip_existing=args.skip_existing,
                     dry_run=args.dry_run,
                 )
