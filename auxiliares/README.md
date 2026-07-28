@@ -178,3 +178,34 @@ Salidas:
 | overrides | 6 tiles → 0.15 |
 | `--only-override-tiles` | procesa solo esos 6 |
 | conectividad | 8 |
+
+## MODIS × similitud dNBR — relleno restrictivo 2019–2025
+
+Usa MODIS como **candidatos espaciales** y tus cicatrices filtradas como **perfil espectral**. Solo se agregan píxeles MODIS muy parecidos al dNBR de lo ya clasificado. LULC **estricto** bloquea agua / urbano / roca / arena / salar / hielo / sin vegetación; **agricultura y pastura no se bloquean**.
+
+```text
+classified_filtered_v6  →  perfil dNBR (mediana ± mad_k×MAD)
+MODIS burned year       →  candidatos
+~strict LULC            →  no agua/urbano/bare/...
+        → ~/classification_20260713_modis_similar/
+```
+
+```bash
+cd ~/fire && git pull
+mkdir -p ~/logs
+
+# Prueba 1 tile
+EXPAND_REGIONS=r1 EXPAND_FROM_YEAR=2020 EXPAND_TO_YEAR=2020 \
+  sbatch auxiliares/run_fill_modis_similar_slurm.sh
+
+# Corrida completa
+sbatch auxiliares/run_fill_modis_similar_slurm.sh
+```
+
+Rutas default leftraru: `~/MODIS/modis_burned_area_chile_<year>.tif`, máscaras en `~/classification_20260619/filtering_work/mascaras/`.
+
+| Parámetro | Default |
+|-----------|---------|
+| `--mad-k` | 1.5 (más bajo = más restrictivo) |
+| `--min-dnbr` | 0.10 |
+| LULC estricto | 29,23,61,34,25 + rio_lago(33) + infraestructura(24) |
