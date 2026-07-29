@@ -256,3 +256,40 @@ Salida: `~/classification_20260713_prefilter_modis/`
 | `--min-added-pixels` | 222 (~20 ha) |
 | LULC estricto | on (ag/pastura permitidos) |
 | prefilter pattern | `b14_chile_{region}_{year}_cog_classified.tif` |
+
+## Prefilter ∩ UNIDOS — relleno completo 2013–2018
+
+Mismo espíritu que MODIS (2019–2025), pero la evidencia externa es `UNIDOS_13_18.shp`.
+Si un polígono de referencia toca **≥1 píxel** del prefilter `classification_20260619`, se agrega el **polígono completo** al producto final (misma resolución; sin buffer).
+
+```text
+accepted = UNIDOS polygons that intersect prefilter
+added = accepted ∩ ~final ∩ ~LULC_estricto
+out = final ∪ added
+```
+
+Default: final `classification_20260713` (tiles regionales v6).
+
+```bash
+cd ~/fire && git pull
+mkdir -p ~/logs
+
+# Prueba
+EXPAND_REGIONS=r1 EXPAND_FROM_YEAR=2017 EXPAND_TO_YEAR=2017 \
+  sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
+
+# Completo r1 r2 r4 r6 × 2013–2018
+sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
+```
+
+Salida: `~/classification_20260713_prefilter_reference/`
+
+Para aplicar sobre mosaicos nacionales v9:
+
+```bash
+LAYOUT=national \
+FINAL_CLASS_DIR=~/classification_20260729 \
+PREFILTER_REF_OUTPUT_DIR=~/classification_20260729_prefilter_reference \
+  sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
+```
+
