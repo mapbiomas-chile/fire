@@ -209,3 +209,31 @@ Rutas default leftraru: `~/MODIS/modis_burned_area_chile_<year>.tif`, máscaras 
 | `--mad-k` | 1.5 (más bajo = más restrictivo) |
 | `--min-dnbr` | 0.10 |
 | LULC estricto | 29,23,61,34,25 + rio_lago(33) + infraestructura(24) |
+
+## Prefilter ∩ MODIS buffer — recuperar píxeles del modelo crudo
+
+Suma a `classification_20260713/` solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m).
+
+```text
+final_v6  ∪  (prefilter_classified ∩ MODIS_buffered ∩ ~LULC_estricto)
+```
+
+```bash
+cd ~/fire && git pull
+mkdir -p ~/logs
+
+# Prueba
+EXPAND_REGIONS=r1 EXPAND_FROM_YEAR=2020 EXPAND_TO_YEAR=2020 \
+  sbatch auxiliares/run_fill_prefilter_modis_slurm.sh
+
+# Completo r1 r2 r4 r6 × 2019–2025
+sbatch auxiliares/run_fill_prefilter_modis_slurm.sh
+```
+
+Salida: `~/classification_20260713_prefilter_modis/`
+
+| Parámetro | Default |
+|-----------|---------|
+| `--modis-buffer-px` | 3 (~90 m a 30 m) |
+| LULC estricto | on (ag/pastura permitidos) |
+| prefilter pattern | `b14_chile_{region}_{year}_cog_classified.tif` |
