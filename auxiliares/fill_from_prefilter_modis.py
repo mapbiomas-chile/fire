@@ -7,7 +7,13 @@ Candidates: classification_20260619 pre-filter (*_cog_classified.tif)
             AND MODIS burned (optionally dilated to soften blocky edges)
             AND NOT already in the base product.
 
+Post-steps on the recovered layer:
+  1. Fill enclosed holes inward (binary_fill_holes on final ∪ candidates)
+  2. Optional light morphological closing to reconnect near pixels
+  3. Sieve added components < min_added_pixels (default 222 ≈ 20 ha)
+
 Optional: block strict LULC (water/urban/bare/rock/salt/ice), keep ag/pasture.
+Final scars from 20260713 are never removed by the sieve.
 """
 
 from __future__ import annotations
@@ -28,6 +34,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from lib.sieve_burn_mask import sieve_connected_components  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -44,8 +52,9 @@ DEFAULT_MASCARAS_ROOT = (
 )
 REGIONS = ("r1", "r2", "r4", "r6")
 
-# Soften MODIS 500 m blocks on the ~30 m grid (3 px ≈ 90 m)
 DEFAULT_MODIS_BUFFER_PX = 3
+DEFAULT_MIN_ADDED_PIXELS = 222
+DEFAULT_CLOSING_SIZE = 3
 
 ACCUMULATED_STRICT_MASKS = (
     "mascara_alfloramiento_rocoso_acumulado.tif",
@@ -62,7 +71,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
             "Add pre-filter classified burn pixels that overlap buffered MODIS "
-            "to the final filtered collection."
+            "to the final filtered collection, then fill holes, optionally close "
+            "gaps, and sieve small added patches."
         )
     )
     p.add_argument("--final-dir", type=Path, default=DEFAULT_FINAL_DIR)
@@ -86,12 +96,7 @@ def parse_args() -> argparse.Namespace:
         "--modis-pattern",
         default="modis_burned_area_chile_{year}.tif",
     )
-    p.add_argument(
-        "--modis-burn-min",
-        type=float,
-        default=1.0,
-        help="MODIS values >= this count as burned",
-    )
+    p.add_argument("--modis-burn-min", type=float, default=1.0)
     p.add_argument(
         "--modis-buffer-px",
         type=int,
@@ -102,19 +107,40 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--lulc-year-fallback",
-        type=int,
-        default=2024,
-        help="Yearly LULC fallback if mask missing (e.g. 2025 -> 2024)",
+        "--fill-holes",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fill enclosed holes inward on final U candidates (default: on)",
     )
+    p.add_argument(
+        "--closing-size",
+        type=int,
+        default=DEFAULT_CLOSING_SIZE,
+        help=(
+            "Morphological closing kernel to reconnect near pixels "
+            f"(default: {DEFAULT_CLOSING_SIZE}; 0 disables)."
+        ),
+    )
+    p.add_argument(
+        "--closing-iterations",
+        type=int,
+        default=1,
+        help="Closing passes (default: 1)",
+    )
+    p.add_argument(
+        "--min-added-pixels",
+        type=int,
+        default=DEFAULT_MIN_ADDED_PIXELS,
+        help=(
+            "Drop added connected components smaller than this "
+            f"(default: {DEFAULT_MIN_ADDED_PIXELS} ~ 20 ha at 30 m)."
+        ),
+    )
+    p.add_argument("--lulc-year-fallback", type=int, default=2024)
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--stats-csv", type=Path, default=None)
-    p.add_argument(
-        "--no-lulc",
-        action="store_true",
-        help="Do not block strict LULC classes",
-    )
+    p.add_argument("--no-lulc", action="store_true")
     return p.parse_args()
 
 
@@ -202,6 +228,87 @@ def build_strict_lulc_mask(
     return mask
 
 
+def refine_union(
+    final_burn: np.ndarray,
+    raw_added: np.ndarray,
+    blocked: np.ndarray,
+    *,
+    fill_holes: bool,
+    closing_size: int,
+    closing_iterations: int,
+) -> tuple[np.ndarray, dict]:
+    working = final_burn | raw_added
+    refined = working.copy()
+    holes_px = 0
+    closed_px = 0
+
+    if fill_holes and working.any():
+        filled = ndimage.binary_fill_holes(working)
+        all_holes = filled & ~working & ~blocked
+        # Fill only holes belonging to scars touched by the recovered pixels.
+        hole_labels, _ = ndimage.label(all_holes, structure=CONNECTIVITY_STRUCTURE)
+        boundary = ndimage.binary_dilation(
+            raw_added, structure=CONNECTIVITY_STRUCTURE, iterations=1
+        )
+        selected_ids = np.unique(hole_labels[boundary & all_holes])
+        selected_ids = selected_ids[selected_ids != 0]
+        holes = (
+            np.isin(hole_labels, selected_ids)
+            if selected_ids.size
+            else np.zeros_like(all_holes)
+        )
+        refined |= holes
+        holes_px = int(holes.sum())
+
+    if closing_size and closing_size > 0 and refined.any():
+        before = refined.copy()
+        structure = np.ones((closing_size, closing_size), dtype=bool)
+        closed = refined.copy()
+        for _ in range(max(1, closing_iterations)):
+            closed = ndimage.binary_closing(closed, structure=structure)
+        # Accept closing additions only around the recovered layer, not around
+        # unrelated scars already present in the trusted final collection.
+        influence = ndimage.binary_dilation(
+            raw_added,
+            structure=CONNECTIVITY_STRUCTURE,
+            iterations=max(1, closing_size // 2),
+        )
+        closing_added = closed & ~before & influence & ~blocked
+        refined |= closing_added
+        refined |= final_burn
+        closed_px = int(closing_added.sum())
+
+    refined = refined | final_burn
+    return refined, {"pixels_filled_holes": holes_px, "pixels_from_closing": closed_px}
+
+
+def sieve_added_only(
+    final_burn: np.ndarray,
+    refined: np.ndarray,
+    *,
+    min_added_pixels: int,
+) -> tuple[np.ndarray, dict]:
+    added = refined & ~final_burn
+    if min_added_pixels <= 1 or not added.any():
+        return refined, {
+            "components_before": 0,
+            "components_after": 0,
+            "pixels_removed_sieve": 0,
+        }
+
+    sieved, stats = sieve_connected_components(
+        added.astype(np.uint8),
+        min_pixels=min_added_pixels,
+        mask_value=1,
+        connectivity=8,
+    )
+    return final_burn | (sieved == 1), {
+        "components_before": stats["components_before"],
+        "components_after": stats["components_after"],
+        "pixels_removed_sieve": stats["pixels_removed"],
+    }
+
+
 def write_uint8(path: Path, data: np.ndarray, profile_template: dict) -> None:
     profile = profile_template.copy()
     profile.update(
@@ -245,6 +352,9 @@ def process_one(
         "output_expanded": str(out_expanded),
         "output_added": str(out_added),
         "modis_buffer_px": args.modis_buffer_px,
+        "fill_holes": args.fill_holes,
+        "closing_size": args.closing_size,
+        "min_added_pixels": args.min_added_pixels,
         "status": "pending",
     }
 
@@ -303,30 +413,46 @@ def process_one(
             year_fallback=args.lulc_year_fallback,
         )
 
-    # prefilter ∩ buffered MODIS ∩ not already final ∩ not strict LULC
-    added = prefilter_burn & modis & ~final_burn & ~blocked
-    expanded = final_burn | added
+    raw_added = prefilter_burn & modis & ~final_burn & ~blocked
+    refined, refine_stats = refine_union(
+        final_burn,
+        raw_added,
+        blocked,
+        fill_holes=args.fill_holes,
+        closing_size=args.closing_size,
+        closing_iterations=args.closing_iterations,
+    )
+    expanded, sieve_stats = sieve_added_only(
+        final_burn,
+        refined,
+        min_added_pixels=args.min_added_pixels,
+    )
+    added = expanded & ~final_burn
 
     write_uint8(out_expanded, expanded.astype(np.uint8), profile)
     write_uint8(out_added, added.astype(np.uint8), profile)
 
     px_ha = pixel_area_ha(transform)
     n_final = int(final_burn.sum())
-    n_pre = int(prefilter_burn.sum())
-    n_modis_raw = int(modis_raw.sum())
-    n_modis = int(modis.sum())
     n_add = int(added.sum())
     n_out = int(expanded.sum())
-    n_blocked = int((prefilter_burn & modis & ~final_burn & blocked).sum())
 
     row.update(
         {
             "status": "ok",
             "pixels_final_before": n_final,
-            "pixels_prefilter": n_pre,
-            "pixels_modis_raw": n_modis_raw,
-            "pixels_modis_buffered": n_modis,
-            "pixels_blocked_lulc": n_blocked,
+            "pixels_prefilter": int(prefilter_burn.sum()),
+            "pixels_modis_raw": int(modis_raw.sum()),
+            "pixels_modis_buffered": int(modis.sum()),
+            "pixels_blocked_lulc": int(
+                (prefilter_burn & modis & ~final_burn & blocked).sum()
+            ),
+            "pixels_raw_added": int(raw_added.sum()),
+            "pixels_filled_holes": refine_stats["pixels_filled_holes"],
+            "pixels_from_closing": refine_stats["pixels_from_closing"],
+            "pixels_removed_sieve": sieve_stats["pixels_removed_sieve"],
+            "sieve_components_before": sieve_stats["components_before"],
+            "sieve_components_after": sieve_stats["components_after"],
             "pixels_added": n_add,
             "pixels_final_after": n_out,
             "area_final_before_ha": n_final * px_ha,
@@ -336,14 +462,14 @@ def process_one(
         }
     )
     logger.info(
-        "%s %s | final=%d pre=%d modis=%d(+buf %d) blocked=%d added=%d out=%d | +%.1f%%",
+        "%s %s | final=%d raw_add=%d holes=+%d close=+%d sieve=-%d added=%d out=%d | +%.1f%%",
         region,
         year,
         n_final,
-        n_pre,
-        n_modis_raw,
-        n_modis,
-        n_blocked,
+        int(raw_added.sum()),
+        refine_stats["pixels_filled_holes"],
+        refine_stats["pixels_from_closing"],
+        sieve_stats["pixels_removed_sieve"],
         n_add,
         n_out,
         row["pct_increase"] if n_final else 0.0,
@@ -353,6 +479,13 @@ def process_one(
 
 def main() -> int:
     args = parse_args()
+    if args.closing_size < 0:
+        logger.error("--closing-size must be >= 0")
+        return 1
+    if args.min_added_pixels < 1:
+        logger.error("--min-added-pixels must be >= 1")
+        return 1
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     stats_csv = args.stats_csv or (args.output_dir / "prefilter_modis_stats.csv")
 
@@ -362,10 +495,14 @@ def main() -> int:
     logger.info("mascaras      : %s", args.mascaras_root)
     logger.info("output-dir    : %s", args.output_dir)
     logger.info(
-        "years %d-%d | modis_buffer_px=%d | lulc_strict=%s",
+        "years %d-%d | modis_buffer_px=%d | fill_holes=%s | closing=%d | "
+        "min_added_px=%d | lulc_strict=%s",
         args.from_year,
         args.to_year,
         args.modis_buffer_px,
+        args.fill_holes,
+        args.closing_size,
+        args.min_added_pixels,
         not args.no_lulc,
     )
 

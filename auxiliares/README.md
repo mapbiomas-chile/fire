@@ -212,10 +212,13 @@ Rutas default leftraru: `~/MODIS/modis_burned_area_chile_<year>.tif`, máscaras 
 
 ## Prefilter ∩ MODIS buffer — recuperar píxeles del modelo crudo
 
-Suma a `classification_20260713/` solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m).
+Suma a `classification_20260713/` solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m). Luego: **relleno de huecos** → **closing suave (conexión)** → **sieve ≥222 px solo en lo agregado**.
 
 ```text
-final_v6  ∪  (prefilter_classified ∩ MODIS_buffered ∩ ~LULC_estricto)
+raw = prefilter ∩ MODIS_buffered ∩ ~final ∩ ~LULC_estricto
+refine = fill_holes(final ∪ raw) + closing 3×3
+added = sieve(refine \ final, min=222)
+out = final ∪ added
 ```
 
 ```bash
@@ -235,5 +238,8 @@ Salida: `~/classification_20260713_prefilter_modis/`
 | Parámetro | Default |
 |-----------|---------|
 | `--modis-buffer-px` | 3 (~90 m a 30 m) |
+| `--fill-holes` | on |
+| `--closing-size` | 3 (0 = sin conexión) |
+| `--min-added-pixels` | 222 (~20 ha) |
 | LULC estricto | on (ag/pastura permitidos) |
 | prefilter pattern | `b14_chile_{region}_{year}_cog_classified.tif` |

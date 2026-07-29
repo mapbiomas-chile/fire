@@ -36,6 +36,8 @@ REGIONS="${EXPAND_REGIONS:-r1 r2 r4 r6}"
 FROM_YEAR="${EXPAND_FROM_YEAR:-2019}"
 TO_YEAR="${EXPAND_TO_YEAR:-2025}"
 MODIS_BUFFER_PX="${MODIS_BUFFER_PX:-3}"
+MIN_ADDED_PIXELS="${MIN_ADDED_PIXELS:-222}"
+CLOSING_SIZE="${CLOSING_SIZE:-3}"
 SKIP_EXISTING="${EXPAND_SKIP_EXISTING:-0}"
 NO_LULC="${NO_LULC:-0}"
 
@@ -51,7 +53,7 @@ echo "MODIS:      ${MODIS_DIR}"
 echo "Masks:      ${MASCARAS_ROOT}"
 echo "Output:     ${OUTPUT_DIR}"
 echo "Regions:    ${REGIONS} | ${FROM_YEAR}-${TO_YEAR}"
-echo "MODIS buf:  ${MODIS_BUFFER_PX} px"
+echo "MODIS buf:  ${MODIS_BUFFER_PX} px | closing=${CLOSING_SIZE} | min_added=${MIN_ADDED_PIXELS}"
 echo "Job id:     ${SLURM_JOB_ID:-local}"
 echo "============================================="
 
@@ -84,6 +86,8 @@ cmd=(
   --from-year "${FROM_YEAR}"
   --to-year "${TO_YEAR}"
   --modis-buffer-px "${MODIS_BUFFER_PX}"
+  --closing-size "${CLOSING_SIZE}"
+  --min-added-pixels "${MIN_ADDED_PIXELS}"
   --stats-csv "${OUTPUT_DIR}/prefilter_modis_stats.csv"
 )
 
