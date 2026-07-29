@@ -11,12 +11,12 @@
 #     sbatch auxiliares/run_fill_prefilter_modis_slurm.sh
 #
 #SBATCH -J fire_prefilter_modis
-#SBATCH -p main
+#SBATCH -p debug
 #SBATCH -n 1
 #SBATCH -c 8
 #SBATCH --mem=64GB
 #SBATCH --mail-type=ALL
-#SBATCH -t 01:00:00
+#SBATCH -t 00:30:00
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 
