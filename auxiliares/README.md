@@ -212,7 +212,7 @@ Rutas default leftraru: `~/MODIS/modis_burned_area_chile_<year>.tif`, máscaras 
 
 ## Prefilter ∩ MODIS buffer — recuperar píxeles del modelo crudo
 
-Suma a `classification_20260713/` solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m). Luego: **relleno de huecos** → **closing suave (conexión)** → **sieve ≥222 px solo en lo agregado**.
+Suma al producto final solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m). Luego: **relleno de huecos** → **closing suave (conexión)** → **sieve ≥222 px solo en lo agregado**.
 
 ```text
 raw = prefilter ∩ MODIS_buffered ∩ ~final ∩ ~LULC_estricto
@@ -221,15 +221,28 @@ added = sieve(refine \ final, min=222)
 out = final ∪ added
 ```
 
+### Nacional v9 (`classification_20260729`)
+
+Final: `burned_area_chile_b14_filtered_v9_{year}.tif` (multibanda; quemado = banda 1). Prefilter regional se OR-mergea sobre la grilla nacional. Solo 2019–2025 (años con MODIS).
+
 ```bash
 cd ~/fire && git pull
 mkdir -p ~/logs
 
-# Prueba
-EXPAND_REGIONS=r1 EXPAND_FROM_YEAR=2020 EXPAND_TO_YEAR=2020 \
-  sbatch auxiliares/run_fill_prefilter_modis_slurm.sh
+# Prueba 1 año
+EXPAND_FROM_YEAR=2020 EXPAND_TO_YEAR=2020 \
+  sbatch auxiliares/run_fill_prefilter_modis_v9_slurm.sh
 
-# Completo r1 r2 r4 r6 × 2019–2025
+# Completo 2019–2025
+sbatch auxiliares/run_fill_prefilter_modis_v9_slurm.sh
+```
+
+Salida: `~/classification_20260729_prefilter_modis/`
+(`*_prefilter_modis.tif` + `*_prefilter_modis_added.tif`)
+
+### Regional v6 (`classification_20260713`, referencia)
+
+```bash
 sbatch auxiliares/run_fill_prefilter_modis_slurm.sh
 ```
 
