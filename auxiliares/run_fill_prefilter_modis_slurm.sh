@@ -11,7 +11,7 @@
 #     sbatch auxiliares/run_fill_prefilter_modis_slurm.sh
 #
 #SBATCH -J fire_prefilter_modis
-#SBATCH -p debug
+#SBATCH -p main
 #SBATCH -n 1
 #SBATCH -c 8
 #SBATCH --mem=64GB
