@@ -293,3 +293,28 @@ PREFILTER_REF_OUTPUT_DIR=~/classification_20260729_prefilter_reference \
   sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
 ```
 
+## Temporada → año calendario (`classification_20260730`)
+
+Los mosaicos de temporada (`{year}.tif` / `{year}_remap.tif`, 3 bandas: fuego / mes / reclasificación por superficie) se nombran por el año de término (oct–abr). `reorder_season_to_calendar.py` los rearma por año calendario usando la banda de mes:
+
+| Fuente | Meses | Van al año calendario |
+|--------|-------|----------------------|
+| Archivo temporada `Y` | 1–4 | `Y` (se quedan) |
+| Archivo temporada `Y+1` | 10–12 | `Y` (se traen) |
+
+Reglas: 2013 conserva sus meses 10–12 (oct–dic 2012) con mes reescrito a 1; 2025 queda parcial (ene–abr); en conflicto gana el evento más temprano (meses 1–4). Las 3 bandas viajan juntas desde el archivo de origen.
+
+```bash
+cd ~/fire && git pull
+mkdir -p ~/logs
+
+# Prueba 1 año
+REORDER_FROM_YEAR=2015 REORDER_TO_YEAR=2015 \
+  sbatch auxiliares/run_reorder_calendar_slurm.sh
+
+# Completo 2013–2025
+sbatch auxiliares/run_reorder_calendar_slurm.sh
+```
+
+Salida: `~/classification_20260730_calendar/burned_area_chile_calendar_{year}.tif` + `season_to_calendar_stats.csv`
+
