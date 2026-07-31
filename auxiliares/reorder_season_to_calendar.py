@@ -34,6 +34,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import rasterio
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,15 +96,41 @@ def read_season(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     return fire, month, surface, profile
 
 
-def check_grid(profile_a: dict, profile_b: dict, label: str) -> None:
-    same = (
+def same_grid(profile_a: dict, profile_b: dict) -> bool:
+    return (
         profile_a["width"] == profile_b["width"]
         and profile_a["height"] == profile_b["height"]
         and profile_a["transform"] == profile_b["transform"]
         and profile_a["crs"] == profile_b["crs"]
     )
-    if not same:
-        raise ValueError(f"Grid mismatch between season files ({label})")
+
+
+def read_season_aligned(
+    path: Path,
+    ref_profile: dict,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read the 3 season bands reprojected (nearest) onto the reference grid."""
+    height = ref_profile["height"]
+    width = ref_profile["width"]
+    bands: list[np.ndarray] = []
+    with rasterio.open(path) as src:
+        if src.count < 3:
+            raise ValueError(f"{path} has {src.count} bands; expected 3")
+        for b in (1, 2, 3):
+            out = np.zeros((height, width), dtype=src.dtypes[b - 1])
+            reproject(
+                source=rasterio.band(src, b),
+                destination=out,
+                src_transform=src.transform,
+                src_crs=src.crs,
+                dst_transform=ref_profile["transform"],
+                dst_crs=ref_profile["crs"],
+                resampling=Resampling.nearest,
+                src_nodata=src.nodata,
+                dst_nodata=0,
+            )
+            bands.append(out)
+    return bands[0], bands[1], bands[2]
 
 
 def process_year(
@@ -165,8 +193,19 @@ def process_year(
     received = 0
     conflicts = 0
     if next_path is not None:
-        next_fire, next_month, next_surface, next_profile = read_season(next_path)
-        check_grid(profile, next_profile, f"{base_path.name} vs {next_path.name}")
+        with rasterio.open(next_path) as nxt:
+            next_profile = nxt.profile.copy()
+        if same_grid(profile, next_profile):
+            next_fire, next_month, next_surface, _ = read_season(next_path)
+        else:
+            logger.warning(
+                "Grid mismatch %s vs %s; aligning to base grid (nearest)",
+                base_path.name,
+                next_path.name,
+            )
+            next_fire, next_month, next_surface = read_season_aligned(
+                next_path, profile
+            )
         incoming = (next_fire > 0) & np.isin(next_month, LATE_MONTHS)
         conflicts = int((incoming & keep).sum())
         add = incoming & ~keep  # earliest event (months 1-4) wins
