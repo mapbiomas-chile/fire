@@ -62,9 +62,9 @@ An XGBoost baseline (`train_fire_model_xgboost.py`) shares the feature construct
 
 | Script | Use case |
 |--------|----------|
-| `run_train_chile_campaign_slurm.sh` | All 7 models (~1 h, 64 GB) |
+| `run_train_chile_campaign_slurm.sh` | All 7 models (one SLURM job) |
 | `run_train_fire_model_slurm.sh` | Single model |
-| `run_classify_chile_slurm.sh` | Full series (~10 h, 128 GB) |
+| `run_classify_chile_slurm.sh` | Full series |
 | `run_classify_region_slurm.sh` | One region / year window |
 | `run_classify_single_mosaic_slurm.sh` | One mosaic (debug / figures) |
 | `train_fire_model_once.sh` | Shared training body for SLURM |
@@ -194,20 +194,7 @@ Then vectorize with `vectorize/cluster_paths.20260619.env.leftraru`.
 
 ---
 
-## 8. Compute envelope (script defaults)
-
-| Job | Walltime | Memory | Partition |
-|-----|----------|--------|-----------|
-| Train campaign | 1 h | 64 GB | `main` |
-| Train one model | 30 min | — | `main` |
-| Classify full series | 10 h | 128 GB | `main` |
-| Classify one region | 1.5 h | 128 GB | `main` |
-
-On `oom_kill`, reduce `BLOCK_SIZE` (often `5_000_000`) or request more memory. Existing classified files may be skipped on re-run.
-
----
-
-## 9. Naming conventions
+## 8. Naming conventions
 
 | Artifact | Pattern |
 |----------|---------|
@@ -218,6 +205,6 @@ On `oom_kill`, reduce `BLOCK_SIZE` (often `5_000_000`) or request more memory. E
 
 ---
 
-## 10. Experimental configurations
+## 9. Experimental configurations
 
 A/B “conservative” env files used before promoting **20260619** live under [`../experiments/`](../experiments/README.md). They are not required for production replication once models exist under `models_col1_20260619`.

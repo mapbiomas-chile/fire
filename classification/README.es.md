@@ -62,9 +62,9 @@ Existe una línea base XGBoost (`train_fire_model_xgboost.py`); la producción C
 
 | *Script* | Uso |
 |----------|-----|
-| `run_train_chile_campaign_slurm.sh` | Los 7 modelos (~1 h, 64 GB) |
+| `run_train_chile_campaign_slurm.sh` | Los 7 modelos (un *job* SLURM) |
 | `run_train_fire_model_slurm.sh` | Un solo modelo |
-| `run_classify_chile_slurm.sh` | Serie completa (~10 h, 128 GB) |
+| `run_classify_chile_slurm.sh` | Serie completa |
 | `run_classify_region_slurm.sh` | Una región / ventana de años |
 | `run_classify_single_mosaic_slurm.sh` | Un mosaico (depuración / figuras) |
 | `train_fire_model_once.sh` | Cuerpo de entrenamiento compartido para SLURM |
@@ -192,20 +192,7 @@ Vectorización: `vectorize/cluster_paths.20260619.env.leftraru`.
 
 ---
 
-## 8. Recursos de cómputo (valores por defecto de los *scripts*)
-
-| Trabajo | Tiempo | Memoria | Partición |
-|---------|--------|---------|-----------|
-| Campaña de entrenamiento | 1 h | 64 GB | `main` |
-| Un modelo | 30 min | — | `main` |
-| Clasificación serie completa | 10 h | 128 GB | `main` |
-| Una región | 1,5 h | 128 GB | `main` |
-
-Ante `oom_kill`, reduzca `BLOCK_SIZE` (a menudo `5_000_000`) o solicite más memoria. Los clasificados existentes pueden omitirse al reejecutar.
-
----
-
-## 9. Convenciones de nombres
+## 8. Convenciones de nombres
 
 | Artefacto | Patrón |
 |-----------|--------|
@@ -216,6 +203,6 @@ Ante `oom_kill`, reduzca `BLOCK_SIZE` (a menudo `5_000_000`) o solicite más mem
 
 ---
 
-## 10. Configuraciones experimentales
+## 9. Configuraciones experimentales
 
 Los env “conservadores” A/B previos a la promoción **20260619** están en [`../experiments/`](../experiments/README.es.md). No son necesarios para replicar producción si los modelos ya existen en `models_col1_20260619`.
