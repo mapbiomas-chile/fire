@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo_mapbiomas_Fuego.png" alt="MapBiomas Fuego" width="360"/>
+</p>
+
 # MapBiomas Fire — Chile (`chile-fire`)
 
 **Español** | [English](README.md)
