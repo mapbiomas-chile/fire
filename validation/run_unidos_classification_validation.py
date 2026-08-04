@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
 """
-Validate MapBiomas Chile classification against UNIDOS_13_18 reference scars.
+Validate MapBiomas Chile **season** classification against UNIDOS_13_18 scars.
 
-Default test case: year 2017, reference ~/validation/UNIDOS_13_18.shp,
-classification from season or calendar national mosaics (band 1 = burn).
+Both sides use the **fire-season** year (season ending year):
+  - Reference ``Season`` (or ``--year-column``) = fire season identity
+  - Classification: ``{year}.tif`` or ``{year}_remap.tif`` under
+    ``~/classification_20260730`` (band 1 = burn)
 
-Pipeline for one calendar year:
-  1. Build binary burn GeoTIFF (value 1) from classification band 1 (>0).
-  2. Name stem mapbiomas_chile_nat_{year} so year token index = 3.
-  3. Reproject burn raster + reference scars to Chile Albers.
-  4. Polygonize classified burn.
-  5. Intersect scars (Season/year = year) with classified polygons.
-  6. Per-scar Jaccard CSV.
+Do **not** use calendar-reordered products for this comparison: UNIDOS is
+seasonal, so matching must be season-to-season.
 
-Example (2017 test on leftraru)::
+Default smoke test: season **2017**.
 
-  python validation/run_unidos_classification_validation.py \\
-    --year 2017 \\
-    --reference-shp ~/validation/UNIDOS_13_18.shp \\
-    --classification-dir ~/classification_20260730_calendar \\
-    --prefer-calendar \\
-    --output-root ~/validation/unidos_vs_20260730
+Example (leftraru)::
+
+  python validation/run_unidos_classification_validation.py --year 2017
+
+  # or
+  bash validation/run_unidos_validation_year.sh
 """
 
 from __future__ import annotations
@@ -49,15 +46,22 @@ logger = logging.getLogger("unidos_validate")
 
 DEFAULT_REFERENCE = Path.home() / "validation" / "UNIDOS_13_18.shp"
 DEFAULT_CLASS_SEASON = Path.home() / "classification_20260730"
-DEFAULT_CLASS_CALENDAR = Path.home() / "classification_20260730_calendar"
-DEFAULT_OUTPUT = Path.home() / "validation" / "unidos_vs_20260730"
+DEFAULT_OUTPUT = Path.home() / "validation" / "unidos_vs_20260730_season"
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="UNIDOS_13_18 vs national classification: one-year validation run."
+        description=(
+            "UNIDOS_13_18 vs season classification (classification_20260730): "
+            "one fire-season year at a time."
+        )
     )
-    p.add_argument("--year", type=int, default=2017, help="Calendar year (default: 2017)")
+    p.add_argument(
+        "--year",
+        type=int,
+        default=2017,
+        help="Fire-season year (Season / filename year). Default: 2017",
+    )
     p.add_argument(
         "--reference-shp",
         type=Path,
@@ -67,49 +71,32 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--classification-dir",
         type=Path,
-        default=None,
-        help="Directory with year mosaics (overrides season/calendar defaults).",
-    )
-    p.add_argument(
-        "--prefer-calendar",
-        action="store_true",
-        help="Prefer burned_area_chile_calendar_{year}.tif when resolving inputs.",
-    )
-    p.add_argument(
-        "--season-dir",
-        type=Path,
         default=DEFAULT_CLASS_SEASON,
         help="Season mosaic dir (default: ~/classification_20260730)",
-    )
-    p.add_argument(
-        "--calendar-dir",
-        type=Path,
-        default=DEFAULT_CLASS_CALENDAR,
-        help="Calendar mosaic dir (default: ~/classification_20260730_calendar)",
     )
     p.add_argument(
         "--burn-band",
         type=int,
         default=1,
-        help="Band with burn (default: 1)",
+        help="Band with burn flag (default: 1)",
     )
     p.add_argument(
         "--year-column",
         default="Season",
-        help="Reference attribute for calendar year (default: Season)",
+        help="Reference field for fire-season year (default: Season)",
     )
     p.add_argument(
         "--output-root",
         type=Path,
         default=DEFAULT_OUTPUT,
-        help="Work/output root (default: ~/validation/unidos_vs_20260730)",
+        help="Work/output root (default: ~/validation/unidos_vs_20260730_season)",
     )
     p.add_argument("--workers", type=int, default=4)
     p.add_argument(
         "--python",
         type=Path,
         default=Path(sys.executable),
-        help="Python for subprocess validators (default: current interpreter)",
+        help="Python for subprocess tools (default: current interpreter)",
     )
     p.add_argument(
         "--skip-existing",
@@ -120,40 +107,28 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def resolve_classification_tif(args: argparse.Namespace) -> Path:
-    year = args.year
-    candidates: list[Path] = []
-
-    if args.classification_dir is not None:
-        base = args.classification_dir
-        candidates.extend(
-            [
-                base / f"burned_area_chile_calendar_{year}.tif",
-                base / f"{year}_remap.tif",
-                base / f"{year}.tif",
-            ]
-        )
-    else:
-        if args.prefer_calendar:
-            candidates.append(
-                args.calendar_dir / f"burned_area_chile_calendar_{year}.tif"
-            )
-        candidates.extend(
-            [
-                args.calendar_dir / f"burned_area_chile_calendar_{year}.tif",
-                args.season_dir / f"{year}_remap.tif",
-                args.season_dir / f"{year}.tif",
-            ]
-        )
-
+def resolve_season_classification_tif(class_dir: Path, year: int) -> Path:
+    """Pick seasonal national mosaic for fire-season year (end year)."""
+    candidates = [
+        class_dir / f"{year}_remap.tif",
+        class_dir / f"{year}.tif",
+        # avoid calendar by default; only if user pointed classification-dir there
+        class_dir / f"burned_area_chile_calendar_{year}.tif",
+    ]
     for path in candidates:
         if path.is_file():
-            logger.info("Classification source: %s", path)
+            if "calendar" in path.name:
+                logger.warning(
+                    "Using calendar file %s — UNIDOS is seasonal; prefer "
+                    "{year}.tif / {year}_remap.tif under classification_20260730",
+                    path,
+                )
+            logger.info("Season classification source: %s", path)
             return path
 
     tried = "\n  ".join(str(p) for p in candidates)
     raise FileNotFoundError(
-        f"No classification raster for year {year}. Tried:\n  {tried}"
+        f"No season classification raster for fire-season year {year}. Tried:\n  {tried}"
     )
 
 
@@ -182,8 +157,7 @@ def write_binary_burn(
         )
         with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(burn, 1)
-    n = int(burn.sum())
-    logger.info("Binary burn written: %s (burn_px=%d)", out_path, n)
+    logger.info("Binary burn written: %s (burn_px=%d)", out_path, int(burn.sum()))
 
 
 def run_cmd(cmd: list[str], *, dry_run: bool) -> None:
@@ -198,7 +172,8 @@ def main() -> int:
     year = args.year
     py = str(args.python)
     out = args.output_root.expanduser().resolve()
-    work = out / f"year_{year}"
+    class_dir = args.classification_dir.expanduser().resolve()
+    work = out / f"season_{year}"
     dirs = {
         "named": work / "01_named_binary",
         "albers": work / "02_class_albers",
@@ -215,13 +190,24 @@ def main() -> int:
         logger.error("Reference not found: %s", ref)
         return 1
 
+    if not class_dir.is_dir():
+        logger.error("Classification dir not found: %s", class_dir)
+        return 1
+
     try:
-        class_tif = resolve_classification_tif(args)
+        class_tif = resolve_season_classification_tif(class_dir, year)
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         return 1
 
-    # Stage 1 — binary named raster
+    logger.info(
+        "Mode: SEASON-to-SEASON | Season/year=%s | UNIDOS.%s ↔ %s",
+        year,
+        args.year_column,
+        class_tif.name,
+    )
+
+    # Stage 1 — binary named raster (year token index 3 for intersect scripts)
     named_tif = dirs["named"] / f"mapbiomas_chile_nat_{year}.tif"
     if args.skip_existing and named_tif.is_file():
         logger.info("Skip binary (exists): %s", named_tif)
@@ -230,7 +216,7 @@ def main() -> int:
             class_tif, named_tif, band=args.burn_band, dry_run=args.dry_run
         )
 
-    # Stage 2 — reproject reference (shared across years)
+    # Stage 2 — reproject reference (shared)
     ref_gpkg = dirs["ref"] / "UNIDOS_13_18_albers.gpkg"
     if args.skip_existing and ref_gpkg.is_file():
         logger.info("Skip reference reproject (exists): %s", ref_gpkg)
@@ -276,10 +262,6 @@ def main() -> int:
 
     # Stage 4 — polygonize
     poly_gpkg = dirs["poly"] / f"mapbiomas_chile_nat_{year}_albers.gpkg"
-    if not poly_gpkg.is_file():
-        # polygonize names from tif stem
-        alt = dirs["poly"] / f"mapbiomas_chile_nat_{year}_albers.gpkg"
-        poly_gpkg = alt
     if args.skip_existing and poly_gpkg.is_file():
         logger.info("Skip polygonize (exists): %s", poly_gpkg)
     else:
@@ -303,8 +285,8 @@ def main() -> int:
             dry_run=args.dry_run,
         )
 
-    # Stage 5 — intersection for this year only
-    hits_gpkg = dirs["hits"] / f"unidos_hits_{year}.gpkg"
+    # Stage 5 — intersection for this fire-season year only
+    hits_gpkg = dirs["hits"] / f"unidos_hits_season_{year}.gpkg"
     if args.skip_existing and hits_gpkg.is_file():
         logger.info("Skip intersect (exists): %s", hits_gpkg)
     else:
@@ -329,7 +311,7 @@ def main() -> int:
         )
 
     # Stage 6 — Jaccard
-    jaccard_csv = dirs["jaccard"] / f"unidos_hits_{year}_jaccard.csv"
+    jaccard_csv = dirs["jaccard"] / f"unidos_hits_season_{year}_jaccard.csv"
     if args.skip_existing and jaccard_csv.is_file():
         logger.info("Skip jaccard (exists): %s", jaccard_csv)
     else:
@@ -345,16 +327,14 @@ def main() -> int:
             dry_run=args.dry_run,
         )
 
-    # Optional spatial metrics for one file
+    # Optional spatial metrics
     metrics_dir = work / "06_spatial_metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
-    summary = metrics_dir / f"summary_{year}.csv"
+    summary = metrics_dir / f"summary_season_{year}.csv"
     if not (args.skip_existing and summary.is_file()):
-        # spatial_validation_metrics expects a pattern dir
-        if not args.dry_run:
-            # place a copy/link name matching pattern
-            hits_copy = metrics_dir / f"hits_{year}.gpkg"
-            if hits_gpkg.is_file() and not hits_copy.is_file():
+        if not args.dry_run and hits_gpkg.is_file():
+            hits_copy = metrics_dir / f"hits_season_{year}.gpkg"
+            if not hits_copy.is_file():
                 shutil.copy2(hits_gpkg, hits_copy)
         run_cmd(
             [
@@ -363,7 +343,7 @@ def main() -> int:
                 "--hits-dir",
                 str(metrics_dir),
                 "--hits-pattern",
-                f"hits_{year}.gpkg",
+                f"hits_season_{year}.gpkg",
                 "--output-dir",
                 str(metrics_dir),
                 "--aggregate-summary-csv",
@@ -373,10 +353,16 @@ def main() -> int:
         )
 
     meta = {
-        "year": year,
+        "mode": "season_to_season",
+        "fire_season_year": year,
         "classification_source": str(class_tif),
+        "classification_dir": str(class_dir),
         "reference": str(ref),
         "year_column": args.year_column,
+        "note": (
+            "UNIDOS Season and MapBiomas {year}.tif / {year}_remap.tif "
+            "are both fire-season (season end year), not calendar remap."
+        ),
         "work_dir": str(work),
         "hits_gpkg": str(hits_gpkg),
         "jaccard_csv": str(jaccard_csv),
@@ -385,7 +371,9 @@ def main() -> int:
     meta_path = work / "run_manifest.json"
     if not args.dry_run:
         meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    logger.info("Done year=%s | hits=%s | jaccard=%s", year, hits_gpkg, jaccard_csv)
+    logger.info(
+        "Done season=%s | hits=%s | jaccard=%s", year, hits_gpkg, jaccard_csv
+    )
     logger.info("Manifest: %s", meta_path)
     return 0
 

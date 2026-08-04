@@ -15,6 +15,29 @@ Scripts to validate and prepare reference layers used to evaluate the burned-are
 | `calculate_jaccard_index.py` | From a hits GeoPackage (`--hits-gpkg`), one row per scar: **B = unary_union(bᵢ)**, **J = area(A∩B)/area(A∪B)**. Legacy mode: single intersection layer + reference/classified totals. |
 | `spatial_validation_metrics.py` | Singh et al. (2015) closeness **D** per reference–segment pair; scar-level **TP/FP/FN**, commission/omission, Jaccard, Dice. See `requirements-spatial-validation.txt`. |
 | `extract_top_fire_events.py` | Build a top-N fire-events layer from yearly national `chile_YYYY_events.gpkg` files (area range, optional year exclusions). |
+| `run_unidos_classification_validation.py` | One fire-season year: UNIDOS_13_18 vs `classification_20260730` (season-to-season). |
+| `run_unidos_validation_year.sh` | Cluster wrapper (default season 2017). |
+
+## UNIDOS vs classification_20260730 (season-to-season)
+
+Reference scars (`~/validation/UNIDOS_13_18.shp`) are tagged by **fire season** (`Season`).  
+National MapBiomas season products are `~/classification_20260730/{Season}.tif` or `{Season}_remap.tif` (band 1 = burn).  
+Compare **the same season id**, not calendar-reordered rasters.
+
+```bash
+cd ~/fire
+git checkout feat/auxiliares-to-gee && git pull
+conda activate mb_fuego
+
+# Smoke test: season 2017
+bash validation/run_unidos_validation_year.sh
+
+# Another season
+VALIDATE_YEAR=2016 bash validation/run_unidos_validation_year.sh
+```
+
+Outputs under `~/validation/unidos_vs_20260730_season/season_2017/`:
+hits GPKG, Jaccard CSV, spatial metrics summary, `run_manifest.json`.
 
 ## Extract top fire events
 
