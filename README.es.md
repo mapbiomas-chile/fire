@@ -118,6 +118,11 @@ Las muestras de entrenamiento suelen usar el token `samples_fire_v1_*` (`SAMPLE_
 - [ ] Identificar el stack LULC, año de la banda 1, ventanas de estabilidad y *flags* de filtrado  
 - [ ] Registrar tamaños de *sieve* y distancias de agrupación al publicar eventos nacionales  
 
+**Guía operativa ampliada** (lista de artefactos, convención de nombres de productos y plantillas de citación commit + entorno):
+
+- [docs/CAMPAIGN_TRACEABILITY.es.md](docs/CAMPAIGN_TRACEABILITY.es.md) (español)  
+- [docs/CAMPAIGN_TRACEABILITY.md](docs/CAMPAIGN_TRACEABILITY.md) (inglés)
+
 ---
 
 ## 6. Idioma
@@ -127,5 +132,7 @@ Las muestras de entrenamiento suelen usar el token `samples_fire_v1_*` (`SAMPLE_
 | [`README.md`](README.md) | Inglés |
 | [`README.es.md`](README.es.md) | Español (este archivo) |
 | Módulos `README.md` / `README.es.md` | Inglés / español por paquete |
+| [`docs/CAMPAIGN_TRACEABILITY.es.md`](docs/CAMPAIGN_TRACEABILITY.es.md) | Artefactos, nombres, citación (ES) |
+| [`docs/CAMPAIGN_TRACEABILITY.md`](docs/CAMPAIGN_TRACEABILITY.md) | Mismo contenido (EN) |
 
 Ambas versiones son equivalentes: parámetros y secuencias de comandos deben coincidir.

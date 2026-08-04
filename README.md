@@ -118,6 +118,11 @@ Training sample files typically use the token `samples_fire_v1_*` (`SAMPLE_VERSI
 - [ ] Document LULC stack identity, year of band 1, stability windows, and filter step flags  
 - [ ] Store vectorization sieve / grouping distances when publishing national events  
 
+**Extended operational guidance** (artifact checklists, product naming tables, and report citation templates for commit + environment):
+
+- [docs/CAMPAIGN_TRACEABILITY.md](docs/CAMPAIGN_TRACEABILITY.md) (English)  
+- [docs/CAMPAIGN_TRACEABILITY.es.md](docs/CAMPAIGN_TRACEABILITY.es.md) (Spanish)
+
 ---
 
 ## 6. Language
@@ -127,5 +132,7 @@ Training sample files typically use the token `samples_fire_v1_*` (`SAMPLE_VERSI
 | [`README.md`](README.md) | English (this file) |
 | [`README.es.md`](README.es.md) | Spanish |
 | Module `README.md` / `README.es.md` | English / Spanish in each package |
+| [`docs/CAMPAIGN_TRACEABILITY.md`](docs/CAMPAIGN_TRACEABILITY.md) | Campaign archive, naming, citation (EN) |
+| [`docs/CAMPAIGN_TRACEABILITY.es.md`](docs/CAMPAIGN_TRACEABILITY.es.md) | Same content (ES) |
 
 When both languages exist, treat English and Spanish as peer versions; keep parameters and command sequences identical.
