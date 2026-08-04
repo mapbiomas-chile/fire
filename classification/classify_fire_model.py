@@ -30,6 +30,7 @@ def classify_pixels(
   hyperparameters,
   block_size,
   decision_threshold=None,
+  return_probabilities: bool = False,
 ):
   threshold = decision_threshold
   if threshold is None:
@@ -39,6 +40,7 @@ def classify_pixels(
   num_pixels = data_vector.shape[0]
   num_blocks = max(1, (num_pixels + block_size - 1) // block_size)
   output = np.empty(num_pixels, dtype=np.int64)
+  burned_probs = np.empty(num_pixels, dtype=np.float32) if return_probabilities else None
 
   tf.compat.v1.reset_default_graph()
   graph, tensors, saver = create_model_graph(hyperparameters, training=False)
@@ -52,7 +54,7 @@ def classify_pixels(
       print(f"[INFO] Processing block {block_idx + 1}/{num_blocks} (pixels {start_idx} to {end_idx})")
       data_block = data_vector[start_idx:end_idx]
 
-      if threshold is None:
+      if threshold is None and not return_probabilities:
         output[start_idx:end_idx] = sess.run(
           tensors["predicted_class"],
           feed_dict={tensors["x_input"]: data_block},
@@ -62,12 +64,26 @@ def classify_pixels(
           tensors["burned_probabilities"],
           feed_dict={tensors["x_input"]: data_block},
         )
-        output[start_idx:end_idx] = (probs[:, burned_class_index] >= float(threshold)).astype(np.int64)
+        p_burn = probs[:, burned_class_index].astype(np.float32)
+        if return_probabilities:
+          burned_probs[start_idx:end_idx] = p_burn
+        if threshold is None:
+          output[start_idx:end_idx] = np.argmax(probs, axis=1)
+        else:
+          output[start_idx:end_idx] = (p_burn >= float(threshold)).astype(np.int64)
 
+  if return_probabilities:
+    return output, burned_probs
   return output
 
 
-def classify_pixels_xgboost(data_vector, model_path, hyperparameters, decision_threshold=None):
+def classify_pixels_xgboost(
+  data_vector,
+  model_path,
+  hyperparameters,
+  decision_threshold=None,
+  return_probabilities: bool = False,
+):
   try:
     import xgboost as xgb
   except ImportError as exc:
@@ -82,16 +98,20 @@ def classify_pixels_xgboost(data_vector, model_path, hyperparameters, decision_t
   burned_class_index = int(hyperparameters.get("BURNED_CLASS_INDEX", BURNED_CLASS_INDEX))
 
   dmatrix = xgb.DMatrix(data_vector)
-  if threshold is None:
-    preds = booster.predict(dmatrix)
-    return preds.astype(np.int64)
-
   probs = booster.predict(dmatrix, output_margin=False)
   if probs.ndim == 1:
-    burned_probs = probs
+    burned_probs = probs.astype(np.float32)
   else:
-    burned_probs = probs[:, burned_class_index]
-  return (burned_probs >= float(threshold)).astype(np.int64)
+    burned_probs = probs[:, burned_class_index].astype(np.float32)
+
+  if threshold is None:
+    labels = (burned_probs >= 0.5).astype(np.int64)
+  else:
+    labels = (burned_probs >= float(threshold)).astype(np.int64)
+
+  if return_probabilities:
+    return labels, burned_probs
+  return labels
 
 
 def apply_spatial_filter(output_image_data, opening_filter_size=None, closing_filter_size=None):
@@ -112,6 +132,21 @@ def apply_spatial_filter(output_image_data, opening_filter_size=None, closing_fi
   return close_image.astype("uint8")
 
 
+def write_geotiff(path: Path, array: np.ndarray, profile_src: dict, *, dtype, nodata) -> None:
+  profile = profile_src.copy()
+  profile.update(
+    dtype=dtype,
+    count=1,
+    compress="deflate",
+    predictor=2 if np.dtype(dtype).kind in ("i", "u") else 3,
+    tiled=True,
+    nodata=nodata,
+  )
+  path.parent.mkdir(parents=True, exist_ok=True)
+  with rasterio.open(path, "w", **profile) as dst:
+    dst.write(array.astype(dtype), 1)
+
+
 def classify_single_mosaic(
   mosaic_path,
   output_path,
@@ -121,6 +156,8 @@ def classify_single_mosaic(
   opening_filter_size=None,
   closing_filter_size=None,
   decision_threshold=None,
+  write_probability: bool = False,
+  probability_path: Path | None = None,
 ):
   data_classify_vector, (height, width) = prepare_mosaic_feature_matrix(mosaic_path, hyperparameters)
 
@@ -132,44 +169,56 @@ def classify_single_mosaic(
 
   backend = hyperparameters.get("MODEL_BACKEND", "tensorflow_mlp")
   if backend == "xgboost":
-    output_data_classified = classify_pixels_xgboost(
+    result = classify_pixels_xgboost(
       data_classify_vector,
       model_path,
       hyperparameters,
       decision_threshold=decision_threshold,
+      return_probabilities=write_probability,
     )
   else:
-    output_data_classified = classify_pixels(
+    result = classify_pixels(
       data_classify_vector,
       model_path,
       hyperparameters,
       block_size=block_size,
       decision_threshold=decision_threshold,
+      return_probabilities=write_probability,
     )
+
+  if write_probability:
+    output_data_classified, burned_probs = result
+  else:
+    output_data_classified = result
+    burned_probs = None
 
   del data_classify_vector
   gc.collect()
+
+  with rasterio.open(mosaic_path) as src:
+    profile = src.profile.copy()
+
+  if write_probability and burned_probs is not None:
+    prob_out = probability_path or output_path.with_name(
+      output_path.name.replace("_classified.tif", "_probability.tif")
+    )
+    if prob_out == output_path:
+      prob_out = output_path.with_name(f"{output_path.stem}_probability.tif")
+    write_geotiff(
+      Path(prob_out),
+      burned_probs.reshape(height, width),
+      profile,
+      dtype=rasterio.float32,
+      nodata=-1.0,
+    )
+    print(f"[INFO] Saved burned probability (pre-morphology): {prob_out}")
+    del burned_probs
 
   output_image_data = output_data_classified.reshape(height, width)
   del output_data_classified
   filtered = apply_spatial_filter(output_image_data, opening_filter_size, closing_filter_size)
 
-  with rasterio.open(mosaic_path) as src:
-    profile = src.profile.copy()
-
-  profile.update(
-    dtype=rasterio.uint8,
-    count=1,
-    compress="deflate",
-    predictor=2,
-    tiled=True,
-    nodata=0,
-  )
-
-  output_path.parent.mkdir(parents=True, exist_ok=True)
-  with rasterio.open(output_path, "w", **profile) as dst:
-    dst.write(filtered, 1)
-
+  write_geotiff(Path(output_path), filtered, profile, dtype=rasterio.uint8, nodata=0)
   print(f"[INFO] Saved classified raster: {output_path}")
 
 
@@ -200,6 +249,14 @@ def main() -> None:
     type=float,
     default=None,
     help="Override burned-class probability threshold from hyperparameters JSON.",
+  )
+  parser.add_argument(
+    "--write-probability",
+    action="store_true",
+    help=(
+      "Also write a float32 GeoTIFF of burned-class softmax probability "
+      "(*_probability.tif), before morphological opening/closing."
+    ),
   )
   args = parser.parse_args()
 
@@ -235,6 +292,8 @@ def main() -> None:
     threshold = hyperparameters.get("DECISION_THRESHOLD")
   if threshold is not None:
     print(f"[INFO] Using burned-class decision threshold: {threshold:.3f}")
+  if args.write_probability:
+    print("[INFO] Will write burned-class probability GeoTIFF")
 
   for mosaic in args.mosaics:
     mosaic_path = Path(mosaic)
@@ -253,6 +312,7 @@ def main() -> None:
       opening_filter_size=opening_filter,
       closing_filter_size=closing_filter,
       decision_threshold=threshold,
+      write_probability=args.write_probability,
     )
 
   print("[INFO] Classification script finished.")

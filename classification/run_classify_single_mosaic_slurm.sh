@@ -33,13 +33,27 @@ MODEL_DIR="${MODEL_DIR:-${HOME}/models_col1}"
 MOSAIC_DIR="${MOSAIC_DIR:-${HOME}/mosaics_cog}"
 OUTPUT_DIR="${OUTPUT_DIR:-${HOME}/classification_output}"
 BLOCK_SIZE="${BLOCK_SIZE:-40000000}"
+WRITE_PROBABILITY="${WRITE_PROBABILITY:-0}"
+DECISION_THRESHOLD="${DECISION_THRESHOLD:-}"
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-22}"
 export TF_NUM_INTRAOP_THREADS="${TF_NUM_INTRAOP_THREADS:-22}"
 export TF_NUM_INTEROP_THREADS="${TF_NUM_INTEROP_THREADS:-2}"
 
-"${PYTHON_ENV}" "${SCRIPT_PATH}" \
-  --model-path "${MODEL_DIR}/${MODEL_NAME}" \
-  --mosaics "${MOSAIC_DIR}/${MOSAIC_NAME}" \
-  --block-size "${BLOCK_SIZE}" \
+cmd=(
+  "${PYTHON_ENV}" "${SCRIPT_PATH}"
+  --model-path "${MODEL_DIR}/${MODEL_NAME}"
+  --mosaics "${MOSAIC_DIR}/${MOSAIC_NAME}"
+  --block-size "${BLOCK_SIZE}"
   --output-dir "${OUTPUT_DIR}"
+)
+
+if [[ "${WRITE_PROBABILITY}" == "1" ]]; then
+  cmd+=(--write-probability)
+fi
+if [[ -n "${DECISION_THRESHOLD}" ]]; then
+  cmd+=(--decision-threshold "${DECISION_THRESHOLD}")
+fi
+
+echo "Running: ${cmd[*]}"
+"${cmd[@]}"
