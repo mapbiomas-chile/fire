@@ -1,64 +1,35 @@
 # Utilities
 
-Auxiliary scripts that support the burned-area pipeline (see [../classification/README.md](../classification/README.md) and [../filtering/README.md](../filtering/README.md)). These tools are independent of any single stage: they download Google Earth Engine (GEE) assets, list and mosaic raster tiles, and inspect GeoTIFF metadata.
+[Español](README.es.md) | **English**
 
-## Contents
+Supporting scripts that are **stage-independent**: Google Earth Engine export helpers, fire-region geometry, tile listing, mosaicking of GeoTIFF subsets, and quick GeoTIFF metadata inspection.
 
-| Script | Description |
-| --- | --- |
-| `download_regiones_fuego_asset.py` | Export the `regiones_fuego_chile_v1` FeatureCollection from GEE to Google Drive. |
-| `fire_regions_bbox_geojson.py` | **Single entry point** for fire-region geometry: convex hull with one region excluded → axis-aligned bbox envelope → optional GeoJSON export; same helpers used by tile listing and mosaicking. |
-| `list_intersecting_tiles.py` | List `.tif` tiles whose bounding box intersects the convex hull of fire regions (excluding the configured region). |
-| `mosaic_subset_clip_bbox.py` | Merge TIFF tiles from a subset folder and clip the mosaic to that hull’s bounding box envelope. |
-| `print_tif_metadata.py` | Print key GeoTIFF metadata for quick compatibility checks. |
+They do not replace the main classification → filtering → vectorize chain ([root README](../README.md)).
 
-## Google Earth Engine downloads
+---
 
-### `download_regiones_fuego_asset.py`
+## Inventory
 
-Exports the `regiones_fuego_chile_v1` FeatureCollection to Google Drive as GeoJSON or GPKG. Configuration is hard-coded at the top of the file (asset ID, project ID, Drive folder, output filename and format). File names keep the `regiones_fuego_*` prefix to match the Earth Engine asset id.
+| Script | Role |
+|--------|------|
+| `download_regiones_fuego_asset.py` | Export `regiones_fuego_chile_v1` FeatureCollection from GEE to Drive |
+| `fire_regions_bbox_geojson.py` | Convex hull (excluding a region, default 5) → bbox envelope → optional GeoJSON |
+| `list_intersecting_tiles.py` | List `.tif` tiles intersecting the fire-region hull |
+| `mosaic_subset_clip_bbox.py` | Merge subset tiles clipped to that bbox |
+| `print_tif_metadata.py` | Print CRS, transform, size, dtype, band count |
 
-## Fire regions bbox (`fire_regions_bbox_geojson.py`)
+Importable helpers from `fire_regions_bbox_geojson.py`: `convex_hull_excluding_region`, `bbox_envelope_excluding_region`.
 
-One script implements the full pipeline:
+---
 
-1. Read the fire-regions vector layer.
-2. Drop features whose `--exclude-region` matches (default region `5`).
-3. Build the **convex hull** of the remaining polygons.
-4. Take its **axis-aligned bounding box** (rectangle = hull envelope).
-5. When run as CLI: write that polygon to **`--output`** GeoJSON and store numeric bounds (`minx`, `miny`, `maxx`, `maxy`) on the feature.
-
-Importable helpers (used by other utilities without running the CLI):
-
-| Function | Role |
-| --- | --- |
-| `convex_hull_excluding_region` | Convex hull geometry and CRS — `list_intersecting_tiles.py` uses this for tile intersection tests. |
-| `bbox_envelope_excluding_region` | Bbox rectangle + CRS — `mosaic_subset_clip_bbox.py` uses this as merge bounds. |
-
-### CLI example
+## Examples
 
 ```bash
-python3 utilities/fire_regions_bbox_geojson.py \
+python utilities/fire_regions_bbox_geojson.py \
   --geojson path/to/regiones_fuego.geojson \
   --output path/to/fire_regions_bbox.geojson
+
+python utilities/print_tif_metadata.py path/to/raster.tif
 ```
 
-## Tile listing and mosaicking
-
-### `list_intersecting_tiles.py`
-
-Calls `fire_regions_bbox_geojson.convex_hull_excluding_region`, then lists every `.tif` under `--tiles-dir` whose bounding box intersects that hull.
-
-### `mosaic_subset_clip_bbox.py`
-
-Merges TIFFs under `--subset-dir` and clips using rasterio merge bounds. Supply either **`--geojson`** (fire regions → bbox envelope computed as above) or **`--bbox-geojson`** with the polygon written by `fire_regions_bbox_geojson.py`.
-
-## Raster inspection
-
-### `print_tif_metadata.py`
-
-Prints CRS, transform, size, dtype, and band count as a quick compatibility check when combining rasters from different sources.
-
-```bash
-python3 print_tif_metadata.py <path/to/raster.tif>
-```
+`download_regiones_fuego_asset.py` uses hard-coded GEE/project settings at the top of the file; edit those constants before running with Earth Engine credentials.

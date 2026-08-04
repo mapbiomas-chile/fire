@@ -1,6 +1,6 @@
-# Ejecución interactiva (sin SLURM)
+# Interactive execution (no SLURM) / Ejecución interactiva (sin SLURM)
 
-Guía mínima por SSH. Detalle del flujo: [README.md](README.md).
+[Español + English commands] · Full methods: [README.md](README.md) · [README.es.md](README.es.md)
 
 ## 1. Configurar rutas (una vez por máquina/usuario)
 

@@ -1,41 +1,27 @@
-# Auxiliary library (`lib/`)
+# Shared library (`lib/`)
 
-Reusable Python helpers for MapBiomas Fire Chile. **Pipelines** live in their own folders (`classification/`, `filtering/`, `vectorize/`); this folder holds importable code they share.
+[Español](README.es.md) | **English**
 
-## Contents
+Importable Python helpers shared by `filtering/`, `vectorize/`, and related tools. Pipelines and path orchestration live in those package directories—**not** here.
+
+---
+
+## Modules
 
 | Module | Purpose |
 |--------|---------|
-| `lulc_stability.py` | 4-year LULC stability windows for yearly non-burnable masks (A2) |
-| `tile_metadata.py` | Parse calendar year, region (`r1`, `r2`, …) and tile id from MapBiomas filenames |
-| `vectorize.py` | Polygonize binary burn masks (raster → GeoDataFrame / GeoPackage) |
+| `lulc_stability.py` | Multi-year LULC stability windows for non-burnable masks |
+| `tile_metadata.py` | Parse year / region tokens from MapBiomas filenames |
+| `vectorize.py` | Core polygonize of binary burn masks |
 | `vectorize_filtered_classified.py` | Per-tile vectorization CLI |
-| `vectorize_national_by_year.py` | Merge tiles by year → polygonize Chile → group events |
-| `raster_by_year.py` | Merge regional rasters into one GeoTIFF per calendar year |
-| `sieve_burn_mask.py` | Remove small connected burn components from binary masks (pre-vectorize sieve) |
-| `group_fire_events.py` | Group nearby polygons into multipolygon fire events; pixel/ha fragment filters |
+| `vectorize_national_by_year.py` | National yearly merge, sieve, event grouping |
+| `raster_by_year.py` | Merge regional rasters into yearly mosaics |
+| `sieve_burn_mask.py` | Remove small connected burn components |
+| `group_fire_events.py` | Aggregate nearby polygons into multipolygon events |
 
-## Vectorization pipeline
+---
 
-To vectorize **after** classification + filtering, use the dedicated auxiliary pipeline:
-
-```bash
-cp vectorize/cluster_paths.env.example vectorize/cluster_paths.env
-source vectorize/cluster_paths.env
-bash vectorize/run_vectorize_pipeline.sh
-```
-
-On NLHPC login node: `bash vectorize/run_vectorize_pipeline.sh` (see [vectorize/LOCAL.md](../vectorize/LOCAL.md))
-
-Full docs: [vectorize/README.md](../vectorize/README.md).
-
-**National (Chile-wide by year):** [vectorize/run_vectorize_national_pipeline.sh](../vectorize/run_vectorize_national_pipeline.sh) — merge → sieve (112 px) → polygonize → fragment filter (112 px) → group scars within 200 m.
-
-## Dependencies
-
-`numpy`, `rasterio`, `geopandas`, `shapely`, `scipy` (sieve / morphological helpers)
-
-## Use from Python
+## Usage
 
 ```python
 from pathlib import Path
@@ -43,3 +29,19 @@ from lib.vectorize import polygonize_raster_file
 
 polygonize_raster_file(Path("tile.tif"), Path("tile_burn.gpkg"))
 ```
+
+Pipeline entry points:
+
+```bash
+source vectorize/cluster_paths.env
+bash vectorize/run_vectorize_pipeline.sh
+bash vectorize/run_vectorize_national_pipeline.sh
+```
+
+See [vectorize/README.md](../vectorize/README.md).
+
+---
+
+## Dependencies
+
+`numpy`, `rasterio`, `geopandas`, `shapely`, `scipy` (for sieve / morphology helpers).

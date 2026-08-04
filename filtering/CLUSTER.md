@@ -1,6 +1,6 @@
-# NLHPC — ejecución con SLURM
+# NLHPC — SLURM execution / ejecución con SLURM
 
-Guía para la cola. Detalle del flujo: [README.md](README.md).
+[Español + English commands] · Full methods: [README.md](README.md) · [README.es.md](README.es.md)
 
 ## Checklist
 
@@ -50,9 +50,8 @@ Logs: `~/logs/fire_class_filter_<JOBID>.out` / `.err`
 | `masks_accumulated` | Máscaras acumuladas |
 | `masks_yearly` | Máscaras anuales |
 | `masks_total` | `mascara_total_<year>.tif` |
-| `filter` | LULC + temporal |
+| `filter` | Temporal + hole fill + LULC (+ optional steps) |
 
-`STEPS=all` ejecuta los cuatro.
+`STEPS=all` runs all configured mask and filter stages.
 
-**Siguiente paso (vectorización + filtro de área):** [`../vectorize/CLUSTER.md`](../vectorize/CLUSTER.md).  
-Histogramas, umbrales y filtro de polígonos: [README.md](README.md) § 5.
+**Next step (vectorize + area filter):** [`../vectorize/CLUSTER.md`](../vectorize/CLUSTER.md).

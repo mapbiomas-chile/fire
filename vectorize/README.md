@@ -1,149 +1,113 @@
-# Vectorize pipeline (auxiliary)
+# Vectorization pipeline
 
-**Post-filtering** step: convert binary burn rasters to polygons (GeoPackage).
+[Español](README.es.md) | **English**
 
-This pipeline runs **after** classification and filtering. It does not replace those steps.
+Converts **filtered** binary burn rasters into polygonal fire events (GeoPackage). This stage does **not** replace classification or LULC filtering.
 
-```text
-classification/          →  raw *_classified.tif
-        │
-        ▼
-filtering/               →  classified_filtered/  (temporal + fill + LULC)
-        │
-        ├─ vectorize/ (per tile)     →  polygons/  (*.gpkg per tile)
-        │
-        └─ vectorize/ (national)     →  national_vector/
-                                         mosaics_by_year/chile_<year>.tif
-                                         polygons_chile/chile_<year>_events.gpkg
-```
-
-Core Python functions live in [`../lib/`](../lib/README.md). This folder is only orchestration and cluster config.
+Upstream: [filtering](../filtering/README.md). Shared algorithms: [lib](../lib/README.md). Interactive notes: [LOCAL.md](LOCAL.md). SLURM: [CLUSTER.md](CLUSTER.md).
 
 ---
 
-## Per-tile vectorization (default)
+## 1. Two operational modes
 
-## Quick start (leftraru — nodo login)
+```text
+classified_filtered/*.tif
+        │
+        ├─► Per-tile polygons  →  WORK_ROOT/polygons/*.gpkg
+        │         │
+        │         └─► Optional area filter (filtering/run_polygon_area_pipeline.sh)
+        │
+        └─► National by year   →  national_vector/
+                 merge → sieve (≥112 px) → polygonize
+                 → fragment filter (≥112 px) → group events ≤ 200 m
+```
+
+| Mode | Script | Primary product |
+|------|--------|-----------------|
+| Per tile | `run_vectorize_pipeline.sh` | One GPKG per filtered tile |
+| National | `run_vectorize_national_pipeline.sh` | `chile_<year>_events.gpkg` |
+| Full post-filter chain | `run_post_filter_pipeline.sh` | Tile + area + (optional) national |
+
+---
+
+## 2. Methods (parameters for replication)
+
+### Per-tile
+
+1. Read binary burn mask (`mask_value = 1` by default).  
+2. Optional pre-polygonize sieve (`VECTORIZE_SIEVE_MIN_PIXELS`, default often **112** ≈ 1 ha at 30 m). Production area evaluation may set `VECTORIZE_SKIP_SIEVE=1` and enforce minimum size later in vector hectares.  
+3. Polygonize connected components; attach `year`, `region`, `source_file`.
+
+### National
+
+1. Merge all regional tiles for calendar year \(Y\) (`lib/raster_by_year.py`).  
+2. Raster sieve: keep components with ≥ **112** pixels (≈ 1 ha).  
+3. Polygonize; drop fragments smaller than **112** px before grouping (unless skipped).  
+4. Group components within **200 m** into multipolygon **events** (`max_gap_m`).
+
+Implementation: `lib/vectorize_national_by_year.py`.
+
+---
+
+## 3. Replication (NLHPC login node — recommended)
+
+Heavy jobs may use SLURM wrappers; default documentation assumes **login-node** bash with conda `mb_fuego`.
 
 ```bash
 cd ~/fire
-
 cp vectorize/cluster_paths.20260619.env.leftraru vectorize/cluster_paths.env
 cp filtering/cluster_paths.20260619.env.leftraru filtering/cluster_paths.env
 source vectorize/cluster_paths.env
-
 conda activate mb_fuego
+
+# 1) Tile polygons
 bash vectorize/run_vectorize_pipeline.sh
-```
 
-Guía interactiva: [LOCAL.md](LOCAL.md).  
-SLURM (opcional): [CLUSTER.md](CLUSTER.md).
+# 2) ≥20 ha pre-filter + percentile rule
+bash filtering/run_polygon_area_pipeline.sh
 
----
-
-## National vectorization (Chile by year)
-
-Merges all regional tiles into **one raster per year**, removes isolated patches below **112 connected pixels** (sieve), polygonizes, applies the **same pixel rule** to fragments before grouping nearby scars into **multipolygon fire events** within **200 m**.
-
-```text
-merge → sieve (≥112 px) → polygonize → fragment filter (≥112 px) → group ≤200 m
-```
-
-```bash
-source vectorize/cluster_paths.env
+# 3) National products (optional)
 bash vectorize/run_vectorize_national_pipeline.sh
+
+# Equivalent sequential helper:
+# bash vectorize/run_post_filter_pipeline.sh
 ```
 
-SLURM (opcional): `sbatch vectorize/run_vectorize_national_pipeline_slurm.sh`
+---
 
-### Output layout
+## 4. Configuration variables
 
-| Path | Content |
-|------|---------|
-| `national_vector/mosaics_by_year/chile_2019.tif` | Merged burn mask for Chile, year 2019 |
-| `national_vector/mosaics_by_year_sieved/chile_2019.tif` | After removing small isolated patches |
-| `national_vector/polygons_chile/chile_2019_events.gpkg` | Grouped events (MultiPolygon) |
-| `national_vector/polygons_raw/` | Optional raw fragments (`VECTORIZE_NATIONAL_KEEP_RAW=1`) |
+### Per-tile (`cluster_paths.env`)
 
-### Event layer columns
+| Variable | Default idea | Role |
+|----------|--------------|------|
+| `PYTHON` | Conda `mb_fuego` | Interpreter |
+| `WORK_ROOT` | filtering work root | Shared paths |
+| `VECTORIZE_INPUT_DIR` | `$WORK_ROOT/classified_filtered` | Input rasters |
+| `VECTORIZE_OUTPUT_DIR` | `$WORK_ROOT/polygons` | Output GPKGs |
+| `VECTORIZE_WORKERS` | 4 (lower to 2 if login is busy) | Parallelism |
+| `VECTORIZE_SIEVE_MIN_PIXELS` | 112 | Pre-polygonize sieve |
+| `VECTORIZE_SKIP_SIEVE` | 0 / 1 | Disable sieve |
 
-| Column | Description |
-|--------|-------------|
-| `event_id` | Unique id per year (`chile_2019_000001`, …) |
-| `year` | Calendar year |
-| `fragment_count` | Polygon fragments merged into this event |
-| `area_ha` / `area_m2` | Event area |
-| `max_gap_m` | Grouping distance used (default 200) |
-| `geometry` | Polygon or MultiPolygon |
+### National
 
-### Config (in `cluster_paths.env`)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VECTORIZE_NATIONAL_WORK_ROOT` | `$WORK_ROOT/national_vector` | Output root |
-| `VECTORIZE_NATIONAL_GROUP_DISTANCE_M` | `200` | Max gap between scars to merge |
-| `VECTORIZE_NATIONAL_FROM_YEAR` / `TO_YEAR` | `2013` / `2025` | Year range |
-| `VECTORIZE_NATIONAL_MERGE_WORKERS` | `2` | Parallel yearly mosaic jobs |
-| `VECTORIZE_NATIONAL_KEEP_RAW` | `0` | Set `1` to keep ungrouped polygons |
-| `VECTORIZE_NATIONAL_SIEVE_MIN_PIXELS` | `112` | Min connected burn component (pixels) on raster |
-| `VECTORIZE_NATIONAL_SIEVE_MIN_HA` | — | Optional ha rule instead of pixels |
-| `VECTORIZE_NATIONAL_SKIP_SIEVE` | `0` | Set `1` to disable raster sieve |
-| `VECTORIZE_NATIONAL_FRAGMENT_MIN_PIXELS` | `112` | Min fragment size (px) before 200 m grouping |
-| `VECTORIZE_NATIONAL_FRAGMENT_MIN_HA` | — | Legacy ha rule for fragment filter |
-| `VECTORIZE_NATIONAL_SKIP_FRAGMENT_FILTER` | `0` | Set `1` to allow small fragments into grouping |
-
-Implementation: [`lib/vectorize_national_by_year.py`](../lib/vectorize_national_by_year.py).
+| Variable | Default | Role |
+|----------|---------|------|
+| `VECTORIZE_NATIONAL_GROUP_DISTANCE_M` | 200 | Event grouping distance |
+| `VECTORIZE_NATIONAL_SIEVE_MIN_PIXELS` | 112 | Raster sieve |
+| `VECTORIZE_NATIONAL_FRAGMENT_MIN_PIXELS` | 112 | Fragment filter |
+| `VECTORIZE_NATIONAL_FROM_YEAR` / `TO_YEAR` | 2013 / 2025 | Years |
 
 ---
 
-## Per-tile configuration
+## 5. Output attributes
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PYTHON` | Yes | — | Interpreter with `geopandas`, `rasterio` |
-| `WORK_ROOT` | Yes* | — | Filtering work root |
-| `VECTORIZE_INPUT_DIR` | No | `$WORK_ROOT/classified_filtered` | Post-filter rasters |
-| `VECTORIZE_OUTPUT_DIR` | No | `$WORK_ROOT/polygons` | Output GeoPackages |
-| `VECTORIZE_WORKERS` | No | `4` | Parallel workers |
-| `VECTORIZE_SIEVE_MIN_PIXELS` | No | `112` | Min connected burn component before polygonize |
-| `VECTORIZE_SKIP_SIEVE` | No | `0` | Set `1` to polygonize without sieve |
-| `VECTORIZE_MERGED_GPKG` | No | — | Optional single merged layer |
-| `VECTORIZE_STATS_JSON` | No | `$WORK_ROOT/logs/vectorize_stats.json` | Run summary |
+**Tile polygons:** `year`, `region`, `source_file`, `mask_value`, geometry.
 
-\*Or set `VECTORIZE_INPUT_DIR` explicitly without `WORK_ROOT`.
+**National events:** `event_id`, `year`, `fragment_count`, `area_ha`, `area_m2`, `max_gap_m`, geometry (Polygon / MultiPolygon).
 
 ---
 
-## Output
+## 6. Dependencies
 
-One `.gpkg` per input raster in `VECTORIZE_OUTPUT_DIR`, with attributes:
-
-| Column | Description |
-|--------|-------------|
-| `year` | Calendar year from filename |
-| `region` | Region id (`1`, `2`, `4`, `6`, …) |
-| `source_file` | Source GeoTIFF name |
-| `mask_value` | Polygonized pixel value (default `1`) |
-
----
-
-## Files
-
-| File | Role |
-|------|------|
-| `run_vectorize_pipeline.sh` | Per-tile vectorization (interactive) |
-| `run_vectorize_pipeline_slurm.sh` | SLURM wrapper (per tile) |
-| `run_vectorize_national_pipeline.sh` | Chile-wide: merge by year + group events |
-| `run_vectorize_national_pipeline_slurm.sh` | SLURM wrapper (national) |
-| `cluster_paths.env.example` | Path template → copy to `cluster_paths.env` |
-
-Implementation: [`lib/vectorize_filtered_classified.py`](../lib/vectorize_filtered_classified.py).
-
-Legacy wrapper (same backend): `filtering/polygonize_mask_parallel.py`.
-
----
-
-## Next steps after vectorization
-
-- Area histograms / threshold: [filtering/README.md](../filtering/README.md) § 5
-- Validation vs reference scars: [validation/README.md](../validation/README.md)
+`geopandas`, `rasterio`, `shapely`, `numpy` (plus modules under `lib/`).

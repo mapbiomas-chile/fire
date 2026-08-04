@@ -1,8 +1,10 @@
-# Ejecución interactiva (nodo login, sin SLURM)
+# Interactive execution (login node, no SLURM) / Ejecución interactiva (nodo login)
 
-Guía mínima por SSH. Detalle del flujo: [README.md](README.md).
+[Español + English commands] · Full methods: [README.md](README.md) · [README.es.md](README.es.md)
 
-Vectorización y filtro de área se ejecutan en el **nodo login** (como el filtrado raster). Los scripts `*_slurm.sh` quedan como opción si necesitas más CPUs/RAM.
+Vectorization and polygon-area filtering run on the **login node** by default (same as interactive raster filtering). SLURM wrappers (`*_slurm.sh`) remain available if more CPUs/RAM are required.
+
+La vectorización y el filtro de área se ejecutan por defecto en el **nodo login**.
 
 ## 1. Configurar rutas (una vez)
 

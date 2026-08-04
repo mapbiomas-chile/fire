@@ -1,9 +1,9 @@
-# NLHPC — vectorización
+# NLHPC — vectorization / vectorización
 
-Pipeline auxiliar que corre **después** de clasificación y filtrado. Detalle: [README.md](README.md).
+Post-classification / post-filtering auxiliary pipeline. Methods: [README.md](README.md) · [README.es.md](README.es.md).
 
-**Ejecución recomendada:** nodo **login** — ver [LOCAL.md](LOCAL.md).  
-Los wrappers `*_slurm.sh` son opcionales si necesitas más recursos.
+**Recommended:** login node — see [LOCAL.md](LOCAL.md). SLURM wrappers are optional for heavier resource needs.
+
 
 ## Checklist
 
