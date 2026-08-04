@@ -30,7 +30,8 @@ def polygonize_burn_mask(
     if not np.any(mask):
         return gpd.GeoDataFrame(geometry=[], crs=crs)
 
-    raster_for_shapes = np.where(mask, 1, 0).astype(np.uint8)
+    # uint8 burn labels only — avoid np.where (int64) on large national grids
+    raster_for_shapes = mask.astype(np.uint8, copy=False)
     geoms = []
     for geom, val in shapes(
         raster_for_shapes,

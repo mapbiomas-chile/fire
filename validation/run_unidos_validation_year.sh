@@ -51,7 +51,33 @@ if [[ ! -d "${CLASS_DIR}" ]]; then
   exit 1
 fi
 
-"${PYTHON}" -c "import geopandas, rasterio, numpy, pandas; print('deps OK')"
+# Preflight: season mosaic + year column sample
+if [[ ! -f "${CLASS_DIR}/${YEAR}_remap.tif" && ! -f "${CLASS_DIR}/${YEAR}.tif" ]]; then
+  echo "ERROR: no season raster ${CLASS_DIR}/${YEAR}.tif or ${YEAR}_remap.tif" >&2
+  ls -la "${CLASS_DIR}" | head -40 >&2 || true
+  exit 1
+fi
+
+"${PYTHON}" - <<PY
+import geopandas as gpd
+from pathlib import Path
+shp = Path(r"${REFERENCE_SHP}")
+gdf = gpd.read_file(shp, rows=5)
+print("deps OK; reference columns:", list(gdf.columns))
+print("reference CRS:", gdf.crs)
+col = "${YEAR_COLUMN}"
+if col not in gdf.columns:
+    lower = {c.lower(): c for c in gdf.columns}
+    if col.lower() in lower:
+        print(f"WARN: year column case mismatch: use {lower[col.lower()]!r}")
+    else:
+        print(f"WARN: {col!r} not in first columns sample — full check in Python runner")
+else:
+    full = gpd.read_file(shp)
+    print(f"Season column {col!r} value counts (head):")
+    print(full[col].value_counts(dropna=False).head(15))
+    print(f"n scars with {col}==${YEAR}:", int((full[col].astype(str).str[:4] == "${YEAR}").sum()))
+PY
 
 cmd=(
   "${PYTHON}" "${SCRIPT}"
