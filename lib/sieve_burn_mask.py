@@ -112,19 +112,27 @@ def sieve_raster_file(
     mask_value: float = 1,
     connectivity: int = 8,
     output_path: Path | None = None,
+    band: int = 1,
+    zero_other_bands_where_removed: bool = True,
 ) -> dict:
     """
-    Sieve a single-band burn mask raster.
+    Sieve burn components on one band (default 1).
 
     Provide ``min_pixels`` or ``min_area_ha`` (resolved per raster geotransform).
     Writes to ``output_path`` or overwrites ``raster_path`` when omitted.
+
+    Multi-band mosaics (season/calendar): only the burn band is sieved; where
+    burn is cleared, ancillary bands can be zeroed so scars stay consistent.
     """
     raster_path = Path(raster_path)
     if min_pixels is None and min_area_ha is None:
         raise ValueError("Provide min_pixels or min_area_ha")
+    if band < 1:
+        raise ValueError("band must be >= 1")
 
     with rasterio.open(raster_path) as src:
-        data = src.read(1)
+        if band > src.count:
+            raise ValueError(f"{raster_path.name}: band {band} out of range 1..{src.count}")
         profile = src.profile.copy()
         pixel_area = pixel_area_m2_from_dataset(src)
         resolved_min_pixels = (
@@ -140,8 +148,9 @@ def sieve_raster_file(
                 stacklevel=2,
             )
 
+        burn = src.read(band)
         sieved, stats = sieve_connected_components(
-            data,
+            burn,
             min_pixels=resolved_min_pixels,
             mask_value=mask_value,
             connectivity=connectivity,
@@ -150,6 +159,7 @@ def sieve_raster_file(
         stats["pixel_area_m2"] = pixel_area
         stats["crs"] = str(src.crs) if src.crs else None
         stats["input_file"] = str(raster_path)
+        stats["band"] = band
 
         if stats["burned_pixels_before"] > 0 and stats["burned_pixels_after"] == 0:
             warnings.warn(
@@ -160,8 +170,22 @@ def sieve_raster_file(
 
         dest = Path(output_path) if output_path else raster_path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with rasterio.open(dest, "w", **profile) as dst:
-            dst.write(sieved, 1)
+        profile.update(driver="GTiff")
+
+        if src.count == 1:
+            with rasterio.open(dest, "w", **profile) as dst:
+                dst.write(sieved, 1)
+        else:
+            stack = src.read()
+            stack[band - 1] = sieved
+            if zero_other_bands_where_removed:
+                keep = sieved != 0
+                for bi in range(src.count):
+                    if bi == band - 1:
+                        continue
+                    stack[bi] = np.where(keep, stack[bi], 0).astype(stack[bi].dtype, copy=False)
+            with rasterio.open(dest, "w", **profile) as dst:
+                dst.write(stack)
 
     stats["output_file"] = str(dest)
     return stats

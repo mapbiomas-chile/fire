@@ -26,10 +26,15 @@ def _sieve_one_file(args: tuple) -> dict:
         mask_value,
         connectivity,
         run_timestamp,
+        keep_names,
+        target_band,
     ) = args
     tif_path = Path(tif_path)
     output_dir = Path(output_dir)
-    output_name = f"{tif_path.stem}_minpatch_{run_timestamp}.tif"
+    if keep_names:
+        output_name = tif_path.name
+    else:
+        output_name = f"{tif_path.stem}_minpatch_{run_timestamp}.tif"
     output_path = output_dir / output_name
     stats = sieve_raster_file(
         tif_path,
@@ -38,6 +43,7 @@ def _sieve_one_file(args: tuple) -> dict:
         mask_value=mask_value,
         connectivity=connectivity,
         output_path=output_path,
+        band=target_band,
     )
     stats["input_file"] = str(tif_path)
     return stats
@@ -70,6 +76,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connectivity", type=int, choices=(4, 8), default=8)
     parser.add_argument("--workers", type=int, default=max(1, (cpu_count() or 1) - 1))
     parser.add_argument("--stats-json", default=None)
+    parser.add_argument(
+        "--keep-names",
+        action="store_true",
+        help="Write outputs with the same basename as inputs (no _minpatch timestamp).",
+    )
+    parser.add_argument(
+        "--target-band",
+        type=int,
+        default=1,
+        help="Burn band to sieve (default: 1).",
+    )
+    parser.add_argument(
+        "--skip-json-sidecars",
+        action="store_true",
+        help="Ignore companion *.json files if pattern would match them (TIF only).",
+    )
     return parser.parse_args()
 
 
@@ -89,6 +111,8 @@ def main() -> int:
     for path in sorted(input_dir.glob(args.pattern)):
         if not path.is_file():
             continue
+        if path.suffix.lower() not in {".tif", ".tiff"}:
+            continue
         if args.name_contains and args.name_contains not in path.name:
             continue
         paths.append(path)
@@ -107,6 +131,8 @@ def main() -> int:
             args.mask_value,
             args.connectivity,
             run_timestamp,
+            args.keep_names,
+            args.target_band,
         )
         for path in paths
     ]
@@ -140,6 +166,8 @@ def main() -> int:
             "min_area_ha": args.min_area_ha,
             "mask_value": args.mask_value,
             "connectivity": args.connectivity,
+            "target_band": args.target_band,
+            "keep_names": args.keep_names,
             "tiles": summaries,
         }
         stats_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
