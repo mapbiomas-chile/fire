@@ -67,6 +67,8 @@ ACCUMULATED_STRICT_MASKS = (
     "mascara_salar_acumulado.tif",
     "mascara_hielo_nieve_acumulado.tif",
     "mascara_otra_area_sin_vegetacion_acumulado.tif",
+    "mascara_rio_lago_acumulado.tif",
+    "mascara_infraestructura_acumulado.tif",
 )
 YEARLY_STRICT_STEMS = ("rio_lago", "infraestructura")
 

@@ -76,31 +76,31 @@ Steps **1–4** (mask build + filter) can run together via `run_classified_filte
 | 1b | `create_yearly_masks.py` | `mascara_<class>_<year>.tif` |
 | 1c | `create_total_masks_by_year.py` | `mascara_total_<year>.tif` |
 
-**1a — Accumulated** (`create_accumulated_class_masks.py`): OR of **time-invariant** classes across all bands of the stack:
+**1a — Accumulated** (`create_accumulated_class_masks.py`): OR of **non-burnable** classes across **all** bands of the stack (pixel marked if the class appears in *any* LULC year). These leave the burn product **completely**:
 
 | Class | MapBiomas code | File |
 |-------|----------------|------|
-| Rocky outcrop | 29 | `mascara_roca_acumulado.tif` |
-| Sand / beach / dune | 23 | `mascara_arena_acumulado.tif` |
+| Rocky outcrop | 29 | `mascara_alfloramiento_rocoso_acumulado.tif` |
+| Sand / beach / dune | 23 | `mascara_arena_playa_duna_acumulado.tif` |
 | Salt flat | 61 | `mascara_salar_acumulado.tif` |
-| Ice / snow | 34 | `mascara_hielo_acumulado.tif` |
-| Non-vegetated | 25 | `mascara_sin_vegetacion_acumulado.tif` |
+| Ice / snow | 34 | `mascara_hielo_nieve_acumulado.tif` |
+| Non-vegetated | 25 | `mascara_otra_area_sin_vegetacion_acumulado.tif` |
+| River / lake | 33 | `mascara_rio_lago_acumulado.tif` |
+| Infrastructure | 24 | `mascara_infraestructura_acumulado.tif` |
 
-**1b — Yearly** (`create_yearly_masks.py`): one mask per **filter year** Y for **variable** classes:
+**1b — Yearly** (`create_yearly_masks.py`): one mask per **filter year** Y for **land-use** classes that use the stability window (not water/infra):
 
 | Class | Code | Output pattern |
 |-------|------|----------------|
-| River / lake | 33 | `mascara_rio_lago_<year>.tif` |
-| Infrastructure | 24 | `mascara_infraestructura_<year>.tif` |
 | Agriculture | 15 | `mascara_agricultura_<year>.tif` |
 | Pasture | 18 | `mascara_pastura_<year>.tif` |
 
-**Stability rule (default `LULC_STABILITY_WINDOW=4`):** for filter year **Y**, a pixel is marked only if it belongs to the class in **four consecutive LULC years**:
+**Stability rule (default `LULC_STABILITY_WINDOW=4`):** for filter year **Y**, agriculture/pasture pixels are marked only if the class is stable across **four consecutive LULC years**:
 
 - Usually **forward** from Y: `Y, Y+1, Y+2, Y+3` (e.g. filter 2017 → LULC 2017–2020).
 - Near the stack end: **backward** ending at Y (e.g. filter 2025 → LULC 2022–2025).
 
-The mask `mascara_*_Y.tif` is applied **only** to burn rasters of year **Y** (not to the other years in the window). Set `LULC_STABILITY_WINDOW=1` for legacy single-year masks.
+The mask `mascara_*_Y.tif` is applied **only** to burn rasters of year **Y**. Set `LULC_STABILITY_WINDOW=1` for single-year agri/pasture masks. Water (33) and infrastructure (24) do **not** use this rule: they are **accumulated** and always blocked.
 
 If the LULC stack has no band for filter year 2025, the pipeline tries to build 2025 masks from the stack; on failure it can copy 2024 → 2025 (`COPY_MASK_2025_FROM_2024=1`, legacy fallback).
 

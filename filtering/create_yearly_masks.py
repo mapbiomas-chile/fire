@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
-Create yearly binary masks for selected land-cover classes (time-varying).
+Create yearly binary masks for agriculture and pasture (time-varying).
 
-For each filter year Y, a pixel is marked only if the class is stable across a
-4-year LULC window (default): [Y, Y+1, Y+2, Y+3], or [Y-3..Y] near the stack end.
-The mask mascara_<class>_Y.tif applies only when filtering burn rasters of year Y.
+Water (33) and infrastructure (24) are handled as *accumulated* masks in
+``create_accumulated_class_masks.py`` (OR across the full LULC stack) so they
+leave burn products completely.
+
+For each filter year Y, a pixel is marked for agri/pasture only if the class is
+stable across a 4-year LULC window (default): [Y, Y+1, Y+2, Y+3], or [Y-3..Y]
+near the stack end. The mask mascara_<class>_Y.tif applies only when filtering
+burn rasters of year Y.
 """
 
 from __future__ import annotations
@@ -25,9 +30,9 @@ if str(REPO_ROOT) not in sys.path:
 from lib.lulc_stability import stability_window_years, year_to_band  # noqa: E402
 
 # (output stem, class id) — filenames: mascara_<stem>_<year>.tif
+# Water (33) and infrastructure (24) are accumulated (see create_accumulated_class_masks.py)
+# so they leave completely; only land-use classes stay on the stability window.
 TARGET_CLASSES = [
-    ("rio_lago", 33),
-    ("infraestructura", 24),
     ("agricultura", 15),
     ("pastura", 18),
 ]
@@ -36,8 +41,8 @@ TARGET_CLASSES = [
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate yearly 0/1 masks for rio_lago (33), infraestructura (24), "
-            "agricultura (15), pastura (18). "
+            "Generate yearly 0/1 masks for agricultura (15) and pastura (18). "
+            "Water (33) and infrastructure (24) use accumulated masks instead. "
             "By default a pixel is marked only if the class is stable across a "
             "forward 4-year LULC window anchored at the filter year."
         )
@@ -143,7 +148,7 @@ def _process_one_year(
     stability_window: int,
     agriculture_stability_window: int | None,
 ) -> tuple[int, int, dict[str, list[int]]]:
-    """Write four mask GeoTIFFs for one filter year. Returns (year, files_written, windows)."""
+    """Write agri/pasture mask GeoTIFFs for one filter year. Returns (year, files_written, windows)."""
     input_path = Path(input_path_str)
     output_dir = Path(output_dir_str)
     output_dir.mkdir(parents=True, exist_ok=True)

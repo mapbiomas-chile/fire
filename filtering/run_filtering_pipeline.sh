@@ -376,7 +376,8 @@ if step_enabled "masks_yearly" && [[ "${TO_YEAR}" -gt "${LULC_TO_YEAR}" ]]; then
     log "Built stability masks for filter year ${TO_YEAR}"
   elif [[ "${COPY_MASK_2025_FROM_2024}" == "1" ]]; then
     log "WARN: Could not build ${TO_YEAR} masks from LULC stack; copying ${LULC_TO_YEAR} → ${TO_YEAR} (legacy fallback)"
-    for stem in rio_lago infraestructura agricultura pastura; do
+    # Yearly A2 is agri/pasture only; water/infra are accumulated (all years).
+    for stem in agricultura pastura; do
       src="${YEARLY_MASKS_DIR}/mascara_${stem}_${LULC_TO_YEAR}.tif"
       dst="${YEARLY_MASKS_DIR}/mascara_${stem}_${TO_YEAR}.tif"
       if [[ ! -f "${src}" ]]; then

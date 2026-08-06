@@ -10,11 +10,16 @@ from rasterio.windows import Window
 
 
 CLASS_SPECS = [
+    # Time-invariant / "never burn" classes: pixel marked if the class appears
+    # in *any* LULC year of the stack (OR across all bands).
     (29, "mascara_alfloramiento_rocoso_acumulado.tif"),
     (23, "mascara_arena_playa_duna_acumulado.tif"),
     (61, "mascara_salar_acumulado.tif"),
     (34, "mascara_hielo_nieve_acumulado.tif"),
     (25, "mascara_otra_area_sin_vegetacion_acumulado.tif"),
+    # Water and infrastructure also leave completely (not 4-year stability).
+    (33, "mascara_rio_lago_acumulado.tif"),
+    (24, "mascara_infraestructura_acumulado.tif"),
 ]
 
 
@@ -66,6 +71,7 @@ def main() -> int:
 
         profile = src.profile.copy()
         profile.update(
+            driver="GTiff",
             dtype=rasterio.uint8,
             count=1,
             nodata=0,

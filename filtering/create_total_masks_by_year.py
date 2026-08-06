@@ -16,13 +16,22 @@ ACCUMULATED_MASK_NAMES = [
     "mascara_salar_acumulado.tif",
     "mascara_hielo_nieve_acumulado.tif",
     "mascara_otra_area_sin_vegetacion_acumulado.tif",
+    "mascara_rio_lago_acumulado.tif",
+    "mascara_infraestructura_acumulado.tif",
 ]
+
+# Optional legacy yearly water/infra (pre-accumulated policy). OR'ed if present.
+LEGACY_YEARLY_STRICT_STEMS = (
+    "rio_lago",
+    "infraestructura",
+)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Create mascara_total_<year>.tif as OR of accumulated masks and yearly "
-            "rio_lago, infraestructura, agricultura, and pastura masks."
+            "Create mascara_total_<year>.tif as OR of accumulated non-burnable "
+            "masks (incl. water 33 + infrastructure 24) and yearly agricultura/"
+            "pastura masks. Legacy yearly rio_lago/infraestructura are OR'ed if present."
         )
     )
     parser.add_argument(
@@ -103,24 +112,25 @@ def write_total_for_year(
     accumulated_union: np.ndarray,
     base_profile: dict,
 ) -> Path:
-    """Compute OR of accumulated union and yearly thematic masks; write mascara_total_<year>.tif."""
-    rio_path = yearly_dir / f"mascara_rio_lago_{year}.tif"
-    infra_path = yearly_dir / f"mascara_infraestructura_{year}.tif"
-    agr_path = yearly_dir / f"mascara_agricultura_{year}.tif"
-    past_path = yearly_dir / f"mascara_pastura_{year}.tif"
+    """OR accumulated union + yearly agri/pasture (+ optional legacy yearly 33/24)."""
+    layers = [accumulated_union]
 
-    rio_mask = read_mask(rio_path) > 0
-    infra_mask = read_mask(infra_path) > 0
-    agr_mask = read_mask(agr_path) > 0
-    past_mask = read_mask(past_path) > 0
+    for stem in ("agricultura", "pastura"):
+        path = yearly_dir / f"mascara_{stem}_{year}.tif"
+        layers.append(read_mask(path) > 0)
 
-    total_mask = np.logical_or.reduce(
-        [accumulated_union, rio_mask, infra_mask, agr_mask, past_mask]
-    ).astype(np.uint8)
+    # Transitional: if old yearly water/infra masks still exist, keep OR'ing them
+    for stem in LEGACY_YEARLY_STRICT_STEMS:
+        path = yearly_dir / f"mascara_{stem}_{year}.tif"
+        if path.is_file():
+            layers.append(read_mask(path) > 0)
+
+    total_mask = np.logical_or.reduce(layers).astype(np.uint8)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"mascara_total_{year}.tif"
     profile = dict(base_profile)
+    profile.update(driver="GTiff")
     with rasterio.open(output_path, "w", **profile) as dst:
         dst.write(total_mask, 1)
 
@@ -179,13 +189,26 @@ def main() -> int:
 
     accumulated_arrays = []
     base_profile = None
+    missing_required = []
     for name in ACCUMULATED_MASK_NAMES:
         path = accumulated_dir / name
+        if not path.is_file():
+            # Water/infra acumulado is required for the current policy; fail clearly.
+            missing_required.append(str(path))
+            continue
         with rasterio.open(path) as src:
             data = src.read(1)
             if base_profile is None:
                 base_profile = src.profile.copy()
             accumulated_arrays.append(data > 0)
+
+    if missing_required:
+        raise FileNotFoundError(
+            "Missing accumulated mask(s). Rebuild with "
+            "create_accumulated_class_masks.py (water 33 and infrastructure 24 "
+            "are now accumulated). Missing:\n  "
+            + "\n  ".join(missing_required)
+        )
 
     accumulated_union = np.logical_or.reduce(accumulated_arrays)
 

@@ -208,7 +208,7 @@ Rutas default leftraru: `~/MODIS/modis_burned_area_chile_<year>.tif`, máscaras 
 |-----------|---------|
 | `--mad-k` | 1.5 (más bajo = más restrictivo) |
 | `--min-dnbr` | 0.10 |
-| LULC estricto | 29,23,61,34,25 + rio_lago(33) + infraestructura(24) |
+| LULC estricto | 29,23,61,34,25 + **rio_lago(33) y infraestructura(24) acumulados** (sin agri/pastura) |
 
 ## Prefilter ∩ MODIS buffer — recuperar píxeles del modelo crudo
 
