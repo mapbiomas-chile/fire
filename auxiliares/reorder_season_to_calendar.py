@@ -50,6 +50,13 @@ DEFAULT_OUTPUT_DIR = Path.home() / "classification_20260730_calendar"
 EARLY_MONTHS = (1, 2, 3, 4)
 LATE_MONTHS = (10, 11, 12)
 
+# Season file candidates (first match wins). ``{year}`` is the fire-season end year.
+SEASON_NAME_TEMPLATES = (
+    "{year}.tif",
+    "{year}_remap.tif",
+    "burned_area_chile_temp_10_remap_{year}.tif",
+)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -71,6 +78,14 @@ def parse_args() -> argparse.Namespace:
             "first year (default: 1 = January)."
         ),
     )
+    p.add_argument(
+        "--output-pattern",
+        default="burned_area_chile_calendar_{year}.tif",
+        help=(
+            "Calendar output filename with {year} placeholder "
+            "(default: burned_area_chile_calendar_{year}.tif)."
+        ),
+    )
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--stats-csv", type=Path, default=None)
@@ -78,8 +93,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def find_season_file(input_dir: Path, year: int) -> Path | None:
-    for name in (f"{year}.tif", f"{year}_remap.tif"):
-        path = input_dir / name
+    for template in SEASON_NAME_TEMPLATES:
+        path = input_dir / template.format(year=year)
         if path.is_file():
             return path
     return None
@@ -140,7 +155,8 @@ def process_year(
 ) -> dict:
     base_path = find_season_file(args.input_dir, year)
     next_path = find_season_file(args.input_dir, year + 1)
-    out_path = args.output_dir / f"burned_area_chile_calendar_{year}.tif"
+    out_name = args.output_pattern.format(year=year)
+    out_path = args.output_dir / out_name
 
     row = {
         "year": year,
