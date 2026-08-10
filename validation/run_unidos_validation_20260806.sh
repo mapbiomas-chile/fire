@@ -4,7 +4,7 @@
 # Design:
 #   * Reference: ~/validation/UNIDOS_13_18.shp  (Season)
 #   * Classification: ~/classification_20260806/burned_area_chile_temp_10_remap_{YYYY}.tif
-#   * Pool: scars ≥ 200 ha, seasons 2013–2018
+#   * Pool: scars ≥ 1000 ha, seasons 2013–2018
 #   * Sample: N=100, stratified by year, seed=42
 #   * Per season: binary burn → Albers → clip → polygonize → intersect → Jaccard
 #
@@ -13,10 +13,10 @@
 #   bash validation/run_unidos_validation_20260806.sh
 #
 # Overrides:
-#   SAMPLE_N=100 MIN_HA=200 FROM_YEAR=2013 TO_YEAR=2018 SEED=42
+#   SAMPLE_N=100 MIN_HA=1000 FROM_YEAR=2013 TO_YEAR=2018 SEED=42
 #   CLASS_DIR=~/classification_20260806 REFERENCE_SHP=~/validation/UNIDOS_13_18.shp
 #   VALIDATE_OUTPUT_ROOT=~/validation/unidos_vs_20260806
-#   SKIP_SAMPLE=1   # use full UNIDOS ≥200 ha, no random sample
+#   SKIP_SAMPLE=1   # use full UNIDOS, no random sample
 #   YEARS=2017      # only one year (default: all years in range)
 
 set -euo pipefail
@@ -31,7 +31,7 @@ YEAR_COLUMN="${YEAR_COLUMN:-Season}"
 
 FROM_YEAR="${FROM_YEAR:-2013}"
 TO_YEAR="${TO_YEAR:-2018}"
-MIN_HA="${MIN_HA:-200}"
+MIN_HA="${MIN_HA:-1000}"
 SAMPLE_N="${SAMPLE_N:-100}"
 SEED="${SEED:-42}"
 WORKERS="${VALIDATE_WORKERS:-4}"
@@ -81,10 +81,10 @@ else
   echo "=== Reuse Albers reference: ${ALBERS_GPKG} ==="
 fi
 
-# --- 2) Sample ≥200 ha, N=100, 2013–2018 ---
+# --- 2) Sample ≥1000 ha, N=100, 2013–2018 ---
 if [[ "${SKIP_SAMPLE}" == "1" ]]; then
   CATALOG_FOR_INTERSECT="${ALBERS_GPKG}"
-  echo "=== SKIP_SAMPLE=1 → use full Albers catalog (≥200 applied only if you add filter later) ==="
+  echo "=== SKIP_SAMPLE=1 → use full Albers catalog (no random sample) ==="
 else
   if [[ ! -f "${SAMPLE_GPKG}" ]]; then
     echo "=== Sample scars ≥${MIN_HA} ha, N=${SAMPLE_N}, seed=${SEED}, stratify by year ==="

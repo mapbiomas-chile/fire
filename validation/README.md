@@ -15,12 +15,12 @@ Scripts to validate and prepare reference layers used to evaluate the burned-are
 | `calculate_jaccard_index.py` | From a hits GeoPackage (`--hits-gpkg`), one row per scar: **B = unary_union(bᵢ)**, **J = area(A∩B)/area(A∪B)**. Legacy mode: single intersection layer + reference/classified totals. |
 | `spatial_validation_metrics.py` | Singh et al. (2015) closeness **D** per reference–segment pair; scar-level **TP/FP/FN**, commission/omission, Jaccard, Dice. See `requirements-spatial-validation.txt`. |
 | `extract_top_fire_events.py` | Build a top-N fire-events layer from yearly national `chile_YYYY_events.gpkg` files (area range, optional year exclusions). |
-| `sample_reference_scars.py` | Filter scars ≥ min ha (default 200) and draw a random sample across the multi-year series (optional stratify-by-year). |
+| `sample_reference_scars.py` | Filter scars ≥ min ha (default 1000) and draw a random sample across the multi-year series (optional stratify-by-year). |
 | `build_mixed_reference_catalog.py` | Merge UNIDOS (2013–2018) + GABAM (to 2022, skip 2019–2020) into one Albers catalog. |
 | `run_unidos_classification_validation.py` | One fire-season year: UNIDOS_13_18 vs `classification_20260730` (season-to-season). |
 | `run_unidos_validation_year.sh` | Cluster wrapper (default season 2017). |
 
-## Sample design (≥ 200 ha, random in the series)
+## Sample design (≥ 1000 ha, random in the series)
 
 ### Option A — UNIDOS only (2013–2018)
 
@@ -31,16 +31,16 @@ python validation/reproject_vector_to_equal_area.py \
   --output ~/validation/UNIDOS_13_18_albers.gpkg \
   --preset chile_albers
 
-# 2) Eligible pool: Season 2013–2018, area >= 200 ha → random sample
+# 2) Eligible pool: Season 2013–2018, area >= 1000 ha → random sample
 python validation/sample_reference_scars.py \
   --catalog ~/validation/UNIDOS_13_18_albers.gpkg \
   --year-column Season \
   --from-year 2013 --to-year 2018 \
-  --min-ha 200 \
+  --min-ha 1000 \
   --sample-n 100 \
   --seed 42 \
   --stratify-by-year \
-  --output ~/validation/samples/unidos_ge200ha_n100_seed42.gpkg
+  --output ~/validation/samples/unidos_ge1000ha_n100_seed42.gpkg
 ```
 
 ### Option B — UNIDOS 2013–2018 + GABAM to 2022 (omit 2019–2020)
@@ -55,16 +55,16 @@ python validation/build_mixed_reference_catalog.py \
   --gabam-exclude-years 2019,2020 \
   --output ~/validation/mixed_unidos_gabam_albers.gpkg
 
-# 2) Sample N=100 scars ≥200 ha, stratified by year (2013–2018, 2021–2022)
+# 2) Sample N=100 scars ≥1000 ha, stratified by year (2013–2018, 2021–2022)
 python validation/sample_reference_scars.py \
   --catalog ~/validation/mixed_unidos_gabam_albers.gpkg \
   --year-column Season \
   --from-year 2013 --to-year 2022 \
-  --min-ha 200 \
+  --min-ha 1000 \
   --sample-n 100 \
   --seed 42 \
   --stratify-by-year \
-  --output ~/validation/samples/mixed_ge200ha_n100_seed42.gpkg
+  --output ~/validation/samples/mixed_ge1000ha_n100_seed42.gpkg
 ```
 
 Years in the pool: **2013–2018 (UNIDOS)** + **2021–2022 (GABAM)**. 2019 and 2020 are dropped from GABAM by default.
@@ -73,12 +73,12 @@ Years in the pool: **2013–2018 (UNIDOS)** + **2021–2022 (GABAM)**. 2019 and 
 - **Sin estratificar**: un sorteo global en toda la serie.
 - El GPKG de muestra se usa después como `--catalog` del `intersect_…`.
 - También en un solo paso:  
-  `intersect_top_n_scars_with_classified.py --min-area-ha 200 --sample-n 100 --seed 42 --stratify-by-year`
+  `intersect_top_n_scars_with_classified.py --min-area-ha 1000 --sample-n 100 --seed 42 --stratify-by-year`
 
 ## UNIDOS 2013–2018 vs classification_20260806 (cluster)
 
 Season product: `~/classification_20260806/burned_area_chile_temp_10_remap_{year}.tif`  
-Reference: `~/validation/UNIDOS_13_18.shp` → sample ≥200 ha, **N=100**, years **2013–2018**, seed 42.
+Reference: `~/validation/UNIDOS_13_18.shp` → sample ≥**1000 ha**, **N=100**, years **2013–2018**, seed 42.
 
 ```bash
 cd ~/fire
@@ -88,7 +88,7 @@ bash validation/run_unidos_validation_20260806.sh
 ```
 
 Outputs under `~/validation/unidos_vs_20260806/`:
-- `ref/unidos_ge200ha_n100_seed42.gpkg` (muestra)
+- `ref/unidos_ge1000ha_n100_seed42.gpkg` (muestra)
 - `season_YYYY/{04_hits,05_jaccard,run_manifest.json}`
 - `logs/season_YYYY.log`
 

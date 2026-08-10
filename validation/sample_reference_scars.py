@@ -2,7 +2,7 @@
 """Sample reference fire scars for validation.
 
 Typical MapBiomas Fire Chile design:
-  1. Keep scars with area >= ``--min-ha`` (default 200 ha).
+  1. Keep scars with area >= ``--min-ha`` (default 1000 ha).
   2. Draw a random sample across the multi-year series
      (optionally stratified by year so every season is represented).
 
@@ -16,11 +16,11 @@ Example (leftraru)::
     --catalog ~/validation/UNIDOS_13_18_albers.gpkg \\
     --year-column Season \\
     --from-year 2013 --to-year 2018 \\
-    --min-ha 200 \\
-    --sample-n 60 \\
+    --min-ha 1000 \\
+    --sample-n 100 \\
     --seed 42 \\
     --stratify-by-year \\
-    --output ~/validation/samples/unidos_ge200ha_n60_seed42.gpkg
+    --output ~/validation/samples/unidos_ge1000ha_n100_seed42.gpkg
 """
 
 from __future__ import annotations
@@ -54,8 +54,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--min-ha",
         type=float,
-        default=200.0,
-        help="Minimum scar area in hectares (default: 200).",
+        default=1000.0,
+        help="Minimum scar area in hectares (default: 1000).",
     )
     p.add_argument(
         "--max-ha",
