@@ -13,8 +13,8 @@
 #SBATCH -J fire_val_unidos
 #SBATCH -p debug
 #SBATCH -n 1
-#SBATCH -c 8
-#SBATCH --mem=64GB
+#SBATCH -c 4
+#SBATCH --mem=32GB
 #SBATCH --mail-user=felipe.lepin@ug.uchile.cl
 #SBATCH --mail-type=ALL
 #SBATCH -t 00:30:00
@@ -26,8 +26,8 @@ set -euo pipefail
 FIRE_REPO="${REPO_ROOT:-${HOME}/fire}"
 RUNNER="${FIRE_REPO}/validation/run_unidos_validation_20260806.sh"
 
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
-export VALIDATE_WORKERS="${VALIDATE_WORKERS:-4}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export VALIDATE_WORKERS="${VALIDATE_WORKERS:-2}"
 export PYTHON="${PYTHON:-${HOME}/.conda/envs/mb_fuego/bin/python}"
 
 # Defaults already in runner; allow sbatch env overrides
