@@ -15,8 +15,36 @@ Scripts to validate and prepare reference layers used to evaluate the burned-are
 | `calculate_jaccard_index.py` | From a hits GeoPackage (`--hits-gpkg`), one row per scar: **B = unary_union(bᵢ)**, **J = area(A∩B)/area(A∪B)**. Legacy mode: single intersection layer + reference/classified totals. |
 | `spatial_validation_metrics.py` | Singh et al. (2015) closeness **D** per reference–segment pair; scar-level **TP/FP/FN**, commission/omission, Jaccard, Dice. See `requirements-spatial-validation.txt`. |
 | `extract_top_fire_events.py` | Build a top-N fire-events layer from yearly national `chile_YYYY_events.gpkg` files (area range, optional year exclusions). |
+| `sample_reference_scars.py` | Filter scars ≥ min ha (default 200) and draw a random sample across the multi-year series (optional stratify-by-year). |
 | `run_unidos_classification_validation.py` | One fire-season year: UNIDOS_13_18 vs `classification_20260730` (season-to-season). |
 | `run_unidos_validation_year.sh` | Cluster wrapper (default season 2017). |
+
+## Sample design (≥ 200 ha, random in the series)
+
+```bash
+# 1) Catalog in Chile Albers (areas in ha)
+python validation/reproject_vector_to_equal_area.py \
+  --input ~/validation/UNIDOS_13_18.shp \
+  --output ~/validation/UNIDOS_13_18_albers.gpkg \
+  --preset chile_albers
+
+# 2) Eligible pool: Season 2013–2018, area >= 200 ha → random sample
+python validation/sample_reference_scars.py \
+  --catalog ~/validation/UNIDOS_13_18_albers.gpkg \
+  --year-column Season \
+  --from-year 2013 --to-year 2018 \
+  --min-ha 200 \
+  --sample-n 60 \
+  --seed 42 \
+  --stratify-by-year \
+  --output ~/validation/samples/unidos_ge200ha_n60_seed42.gpkg
+```
+
+- **`--stratify-by-year`**: reparte N lo más pareja posible entre temporadas (recomendado).
+- **Sin estratificar**: un sorteo global en toda la serie.
+- El GPKG de muestra se usa después como `--catalog` del `intersect_…`.
+- También en un solo paso:  
+  `intersect_top_n_scars_with_classified.py --min-area-ha 200 --sample-n 60 --seed 42 --stratify-by-year`
 
 ## UNIDOS vs classification_20260730 (season-to-season)
 
@@ -38,6 +66,11 @@ VALIDATE_YEAR=2016 bash validation/run_unidos_validation_year.sh
 
 Outputs under `~/validation/unidos_vs_20260730_season/season_2017/`:
 hits GPKG, Jaccard CSV, spatial metrics summary, `run_manifest.json`.
+
+Notes:
+- Polygonize output is `mapbiomas_chile_nat_{year}_albers_mask1.gpkg` (suffix required by the polygonizer).
+- National mosaics are **clipped** to UNIDOS scars for that season (+5 km buffer) before polygonize — full-Chile polygonize OOMs.
+- If a previous failed run left partial outputs, remove `~/validation/unidos_vs_20260730_season/season_2017/` and re-run, or use without `VALIDATE_SKIP_EXISTING=1`.
 
 ## Extract top fire events
 

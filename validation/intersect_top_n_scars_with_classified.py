@@ -54,9 +54,36 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--min-area-ha",
+        type=float,
+        default=None,
+        help="Keep only scars with area >= this (ha). Uses --area-column or geometry.",
+    )
+    parser.add_argument(
+        "--sample-n",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "After area/year filters, randomly sample N scars (not compatible with --top-n). "
+            "Use --seed for reproducibility; --stratify-by-year splits N across years."
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="RNG seed for --sample-n (default: 42).",
+    )
+    parser.add_argument(
+        "--stratify-by-year",
+        action="store_true",
+        help="With --sample-n, allocate N as evenly as possible across years.",
+    )
+    parser.add_argument(
         "--area-column",
         default="area_ha",
-        help="Column used to rank scars when --top-n is set (default: area_ha).",
+        help="Column used to rank/filter scars (default: area_ha).",
     )
     parser.add_argument(
         "--year-column",
@@ -244,6 +271,85 @@ def apply_top_n(
     )
 
 
+def apply_min_area_ha(
+    scar_gdf: gpd.GeoDataFrame,
+    min_area_ha: float | None,
+    area_column: str,
+) -> gpd.GeoDataFrame:
+    if min_area_ha is None:
+        return scar_gdf
+    col = _rank_column(scar_gdf, area_column)
+    if col not in scar_gdf.columns:
+        raise ValueError(
+            f"Area column {col!r} missing for --min-area-ha "
+            "(reproject with area_ha first)."
+        )
+    out = scar_gdf.loc[scar_gdf[col] >= float(min_area_ha)].copy()
+    print(
+        f"[INFO] --min-area-ha {min_area_ha}: kept {len(out)} / {len(scar_gdf)} scars "
+        f"(column {col})"
+    )
+    return out.reset_index(drop=True)
+
+
+def apply_random_sample(
+    scar_gdf: gpd.GeoDataFrame,
+    sample_n: int | None,
+    *,
+    seed: int,
+    stratify_by_year: bool,
+) -> gpd.GeoDataFrame:
+    if sample_n is None:
+        return scar_gdf
+    if sample_n < 1:
+        raise ValueError("--sample-n must be >= 1 when set.")
+    if scar_gdf.empty:
+        return scar_gdf
+    if len(scar_gdf) <= sample_n:
+        print(
+            f"[INFO] --sample-n {sample_n}: pool has {len(scar_gdf)} scars "
+            "(using all)."
+        )
+        return scar_gdf.reset_index(drop=True)
+
+    if stratify_by_year and "scar_year" in scar_gdf.columns:
+        years = sorted(scar_gdf["scar_year"].unique())
+        base = sample_n // len(years)
+        rem = sample_n % len(years)
+        allot = {int(y): base + (1 if i < rem else 0) for i, y in enumerate(years)}
+        rng = __import__("numpy").random.default_rng(seed)
+        parts: list[gpd.GeoDataFrame] = []
+        leftover = 0
+        for y in years:
+            sub = scar_gdf.loc[scar_gdf["scar_year"] == y]
+            want = allot[int(y)]
+            if want <= 0:
+                continue
+            if len(sub) <= want:
+                parts.append(sub)
+                leftover += want - len(sub)
+            else:
+                idx = rng.choice(sub.index.to_numpy(), size=want, replace=False)
+                parts.append(sub.loc[idx])
+        if leftover > 0 and parts:
+            already = pd.concat(parts)
+            remaining = scar_gdf.drop(index=already.index, errors="ignore")
+            if not remaining.empty:
+                take = min(leftover, len(remaining))
+                idx = rng.choice(remaining.index.to_numpy(), size=take, replace=False)
+                parts.append(remaining.loc[idx])
+        out = gpd.GeoDataFrame(pd.concat(parts), crs=scar_gdf.crs)
+        print(
+            f"[INFO] --sample-n {sample_n} stratified (seed={seed}): "
+            f"drew {len(out)} scars across {len(years)} year(s)"
+        )
+        return out.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+
+    out = scar_gdf.sample(n=sample_n, random_state=seed).reset_index(drop=True)
+    print(f"[INFO] --sample-n {sample_n} global (seed={seed}): drew {len(out)} scars")
+    return out
+
+
 def intersect_and_write(
     scar_gdf: gpd.GeoDataFrame,
     classified_by_year: dict[int, list[str]],
@@ -318,6 +424,10 @@ def intersect_and_write(
 
 
 def _validate_args(args: argparse.Namespace) -> None:
+    if args.top_n is not None and args.sample_n is not None:
+        raise SystemExit("Use either --top-n or --sample-n, not both.")
+    if args.sample_n is None and args.stratify_by_year:
+        raise SystemExit("--stratify-by-year requires --sample-n.")
     if args.by_year:
         if args.output:
             raise SystemExit("With --by-year use --output-dir and --output-stem, not --output.")
@@ -369,6 +479,7 @@ def main() -> int:
         classified_by_year.setdefault(year, []).append(str(path))
 
     scar_gdf = build_scar_layer(gdf, args.year_column)
+    scar_gdf = apply_min_area_ha(scar_gdf, args.min_area_ha, args.area_column)
 
     rank_key = _rank_column(scar_gdf, args.area_column)
 
@@ -380,9 +491,18 @@ def main() -> int:
         years = sorted(scar_gdf["scar_year"].unique())
         for y in years:
             sub = scar_gdf.loc[scar_gdf["scar_year"] == y].copy()
-            sub = apply_top_n(sub, args.top_n, args.area_column)
+            if args.sample_n is not None:
+                # With --by-year, sample_n is interpreted per year
+                sub = apply_random_sample(
+                    sub,
+                    args.sample_n,
+                    seed=args.seed + int(y),
+                    stratify_by_year=False,
+                )
+            else:
+                sub = apply_top_n(sub, args.top_n, args.area_column)
             if sub.empty:
-                print(f"[INFO] Year {y}: no scars after --top-n filter, skip.")
+                print(f"[INFO] Year {y}: no scars after filters, skip.")
                 continue
             if y not in classified_by_year:
                 print(
@@ -400,13 +520,23 @@ def main() -> int:
         if scar_gdf.empty:
             raise RuntimeError(f"No scars in catalog for year {args.year}.")
 
-    scar_gdf = apply_top_n(scar_gdf, args.top_n, args.area_column)
+    if args.sample_n is not None:
+        scar_gdf = apply_random_sample(
+            scar_gdf,
+            args.sample_n,
+            seed=args.seed,
+            stratify_by_year=args.stratify_by_year,
+        )
+    else:
+        scar_gdf = apply_top_n(scar_gdf, args.top_n, args.area_column)
     if scar_gdf.empty:
         raise RuntimeError("No scars left after filters.")
 
     out = Path(args.output)
     if args.top_n:
         print(f"[INFO] Scars to process: {len(scar_gdf)} (global top {args.top_n} by {rank_key})")
+    elif args.sample_n:
+        print(f"[INFO] Scars to process: {len(scar_gdf)} (random sample)")
     else:
         print(f"[INFO] Scars to process: {len(scar_gdf)}")
 
