@@ -16,10 +16,13 @@ Scripts to validate and prepare reference layers used to evaluate the burned-are
 | `spatial_validation_metrics.py` | Singh et al. (2015) closeness **D** per reference–segment pair; scar-level **TP/FP/FN**, commission/omission, Jaccard, Dice. See `requirements-spatial-validation.txt`. |
 | `extract_top_fire_events.py` | Build a top-N fire-events layer from yearly national `chile_YYYY_events.gpkg` files (area range, optional year exclusions). |
 | `sample_reference_scars.py` | Filter scars ≥ min ha (default 200) and draw a random sample across the multi-year series (optional stratify-by-year). |
+| `build_mixed_reference_catalog.py` | Merge UNIDOS (2013–2018) + GABAM (to 2022, skip 2019–2020) into one Albers catalog. |
 | `run_unidos_classification_validation.py` | One fire-season year: UNIDOS_13_18 vs `classification_20260730` (season-to-season). |
 | `run_unidos_validation_year.sh` | Cluster wrapper (default season 2017). |
 
 ## Sample design (≥ 200 ha, random in the series)
+
+### Option A — UNIDOS only (2013–2018)
 
 ```bash
 # 1) Catalog in Chile Albers (areas in ha)
@@ -34,17 +37,43 @@ python validation/sample_reference_scars.py \
   --year-column Season \
   --from-year 2013 --to-year 2018 \
   --min-ha 200 \
-  --sample-n 60 \
+  --sample-n 100 \
   --seed 42 \
   --stratify-by-year \
-  --output ~/validation/samples/unidos_ge200ha_n60_seed42.gpkg
+  --output ~/validation/samples/unidos_ge200ha_n100_seed42.gpkg
 ```
 
-- **`--stratify-by-year`**: reparte N lo más pareja posible entre temporadas (recomendado).
+### Option B — UNIDOS 2013–2018 + GABAM to 2022 (omit 2019–2020)
+
+```bash
+# 1) Merge references (Albers + area_ha + Season + source)
+python validation/build_mixed_reference_catalog.py \
+  --unidos ~/validation/UNIDOS_13_18.shp \
+  --gabam ~/validation/GABAM_chile.shp \
+  --unidos-year-column Season \
+  --gabam-year-column year \
+  --gabam-exclude-years 2019,2020 \
+  --output ~/validation/mixed_unidos_gabam_albers.gpkg
+
+# 2) Sample N=100 scars ≥200 ha, stratified by year (2013–2018, 2021–2022)
+python validation/sample_reference_scars.py \
+  --catalog ~/validation/mixed_unidos_gabam_albers.gpkg \
+  --year-column Season \
+  --from-year 2013 --to-year 2022 \
+  --min-ha 200 \
+  --sample-n 100 \
+  --seed 42 \
+  --stratify-by-year \
+  --output ~/validation/samples/mixed_ge200ha_n100_seed42.gpkg
+```
+
+Years in the pool: **2013–2018 (UNIDOS)** + **2021–2022 (GABAM)**. 2019 and 2020 are dropped from GABAM by default.
+
+- **`--stratify-by-year`**: reparte N lo más pareja posible entre temporadas/años (recomendado).
 - **Sin estratificar**: un sorteo global en toda la serie.
 - El GPKG de muestra se usa después como `--catalog` del `intersect_…`.
 - También en un solo paso:  
-  `intersect_top_n_scars_with_classified.py --min-area-ha 200 --sample-n 60 --seed 42 --stratify-by-year`
+  `intersect_top_n_scars_with_classified.py --min-area-ha 200 --sample-n 100 --seed 42 --stratify-by-year`
 
 ## UNIDOS vs classification_20260730 (season-to-season)
 
