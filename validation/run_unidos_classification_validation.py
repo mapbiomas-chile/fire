@@ -45,8 +45,8 @@ logging.basicConfig(
 logger = logging.getLogger("unidos_validate")
 
 DEFAULT_REFERENCE = Path.home() / "validation" / "UNIDOS_13_18.shp"
-DEFAULT_CLASS_SEASON = Path.home() / "classification_20260730"
-DEFAULT_OUTPUT = Path.home() / "validation" / "unidos_vs_20260730_season"
+DEFAULT_CLASS_SEASON = Path.home() / "classification_20260806"
+DEFAULT_OUTPUT = Path.home() / "validation" / "unidos_vs_20260806_season"
 
 # polygonize_mask_parallel.py always appends _mask{value}
 MASK_VALUE = 1
@@ -138,16 +138,18 @@ def resolve_year_column(columns: list[str], preferred: str) -> str:
 def resolve_season_classification_tif(class_dir: Path, year: int) -> Path:
     """Pick seasonal national mosaic for fire-season year (end year)."""
     candidates = [
+        class_dir / f"burned_area_chile_temp_10_remap_{year}.tif",
         class_dir / f"{year}_remap.tif",
         class_dir / f"{year}.tif",
         class_dir / f"burned_area_chile_calendar_{year}.tif",
+        class_dir / "calendar" / f"burned_area_chile_calendar_{year}.tif",
     ]
     for path in candidates:
         if path.is_file():
-            if "calendar" in path.name:
+            if "calendar" in path.name.lower() or path.parent.name == "calendar":
                 logger.warning(
-                    "Using calendar file %s — UNIDOS is seasonal; prefer "
-                    "{year}.tif / {year}_remap.tif under classification_20260730",
+                    "Using calendar file %s — for UNIDOS prefer season "
+                    "burned_area_chile_temp_10_remap_{year}.tif",
                     path,
                 )
             logger.info("Season classification source: %s", path)

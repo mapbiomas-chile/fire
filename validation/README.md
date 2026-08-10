@@ -75,6 +75,25 @@ Years in the pool: **2013–2018 (UNIDOS)** + **2021–2022 (GABAM)**. 2019 and 
 - También en un solo paso:  
   `intersect_top_n_scars_with_classified.py --min-area-ha 200 --sample-n 100 --seed 42 --stratify-by-year`
 
+## UNIDOS 2013–2018 vs classification_20260806 (cluster)
+
+Season product: `~/classification_20260806/burned_area_chile_temp_10_remap_{year}.tif`  
+Reference: `~/validation/UNIDOS_13_18.shp` → sample ≥200 ha, **N=100**, years **2013–2018**, seed 42.
+
+```bash
+cd ~/fire
+git checkout feat/auxiliares-to-gee && git pull
+conda activate mb_fuego
+bash validation/run_unidos_validation_20260806.sh
+```
+
+Outputs under `~/validation/unidos_vs_20260806/`:
+- `ref/unidos_ge200ha_n100_seed42.gpkg` (muestra)
+- `season_YYYY/{04_hits,05_jaccard,run_manifest.json}`
+- `logs/season_YYYY.log`
+
+One year only: `YEARS=2017 bash validation/run_unidos_validation_20260806.sh`
+
 ## UNIDOS vs classification_20260730 (season-to-season)
 
 Reference scars (`~/validation/UNIDOS_13_18.shp`) are tagged by **fire season** (`Season`).  
