@@ -94,6 +94,19 @@ Outputs under `~/validation/unidos_vs_20260806/`:
 
 One year only: `YEARS=2017 bash validation/run_unidos_validation_20260806.sh`
 
+### SLURM (debug, 30 min)
+
+```bash
+cd ~/fire && git checkout feat/auxiliares-to-gee && git pull
+mkdir -p ~/logs
+sbatch validation/run_unidos_validation_20260806_slurm.sh
+
+# smoke test 1 year on debug
+YEARS=2017 sbatch validation/run_unidos_validation_20260806_slurm.sh
+```
+
+Logs: `~/logs/fire_val_unidos_<jobid>.out` / `.err`
+
 ## UNIDOS vs classification_20260730 (season-to-season)
 
 Reference scars (`~/validation/UNIDOS_13_18.shp`) are tagged by **fire season** (`Season`).  
