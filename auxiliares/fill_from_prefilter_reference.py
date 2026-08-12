@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
-Recover burns for 2013–2018 using UNIDOS_13_18 reference scars gated by prefilter.
+Recover burns for 2013–2018 using UNIDOS_13_18 scars missing from preliminary.
 
 Base product: classification_20260713 (regional filtered v6) or national v9.
-Evidence gate: classification_20260619 pre-filter (*_cog_classified.tif).
+Preliminary: classification_20260619 pre-filter (*_cog_classified.tif).
 Reference: UNIDOS_13_18.shp (column Season = year).
 
-Logic (complete polygon fill):
-  Keep a reference polygon only if it overlaps ≥1 prefilter burn pixel.
-  Then add the *entire* polygon (same resolution, no buffer) into the final
-  product, optionally excluding strict LULC.
+Logic (default --mode missing-from-prefilter):
+  Keep a UNIDOS polygon only if it does **not** touch any prefilter burn pixel
+  (fire present in UNIDOS but absent from preliminary classification).
+  Rasterize the full polygon into the final product, then apply LULC group A
+  (accumulated non-burnable) on the union.
 
-    accepted_ref = rasterize(UNIDOS polygons that touch prefilter)
-    added = accepted_ref ∩ ~final ∩ ~LULC_strict
-    out = final ∪ added
+    accepted_ref = rasterize(UNIDOS polygons with zero prefilter overlap)
+    union = final ∪ (accepted_ref ∩ ~final)
+    out = union ∩ ~LULC_accA
 
-Trusted final scars are never removed.
+Legacy --mode touch-prefilter keeps the old gate (≥1 prefilter hit).
 """
 
 from __future__ import annotations
@@ -61,7 +62,8 @@ REGIONS = ("r1", "r2", "r4", "r6")
 NATIONAL_FINAL_PATTERN = "burned_area_chile_b14_filtered_v9_{year}.tif"
 REGIONAL_FINAL_PATTERN = "b14_chile_{region}_{year}_classified_filtered_v6.tif"
 
-ACCUMULATED_STRICT_MASKS = (
+# LULC paso A = accumulated non-burnable only (no agri/pasture yearly).
+ACCUMULATED_LULC_A = (
     "mascara_alfloramiento_rocoso_acumulado.tif",
     "mascara_arena_playa_duna_acumulado.tif",
     "mascara_salar_acumulado.tif",
@@ -70,14 +72,14 @@ ACCUMULATED_STRICT_MASKS = (
     "mascara_rio_lago_acumulado.tif",
     "mascara_infraestructura_acumulado.tif",
 )
-YEARLY_STRICT_STEMS = ("rio_lago", "infraestructura")
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "Add complete UNIDOS_13_18 reference polygons that touch at least "
-            "one pre-filter burn pixel into the final collection (2013–2018)."
+            "Add complete UNIDOS_13_18 polygons missing from the preliminary "
+            "classification into the final collection (2013–2018), then apply "
+            "LULC group A."
         )
     )
     p.add_argument("--final-dir", type=Path, default=DEFAULT_FINAL_DIR)
@@ -94,6 +96,15 @@ def parse_args() -> argparse.Namespace:
             "Chile mosaics v9 (20260729), burn in --final-band."
         ),
     )
+    p.add_argument(
+        "--mode",
+        choices=("missing-from-prefilter", "touch-prefilter"),
+        default="missing-from-prefilter",
+        help=(
+            "missing-from-prefilter (default): UNIDOS with zero overlap vs "
+            "preliminary. touch-prefilter: legacy ≥1 prefilter hit."
+        ),
+    )
     p.add_argument("--final-band", type=int, default=1)
     p.add_argument("--regions", nargs="+", default=list(REGIONS))
     p.add_argument("--from-year", type=int, default=2013)
@@ -104,11 +115,14 @@ def parse_args() -> argparse.Namespace:
         default="b14_chile_{region}_{year}_cog_classified.tif",
     )
     p.add_argument("--year-column", default="Season")
-    p.add_argument("--lulc-year-fallback", type=int, default=2024)
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--stats-csv", type=Path, default=None)
-    p.add_argument("--no-lulc", action="store_true")
+    p.add_argument(
+        "--no-lulc",
+        action="store_true",
+        help="Skip LULC group A post-filter after adding pixels",
+    )
     return p.parse_args()
 
 
@@ -142,39 +156,21 @@ def align_band_to_ref(
     return out >= positive_min
 
 
-def build_strict_lulc_mask(
+def build_lulc_acc_a_mask(
     mascaras_root: Path,
-    year: int,
     *,
     height: int,
     width: int,
     transform,
     crs,
-    year_fallback: int,
 ) -> np.ndarray:
+    """Accumulated LULC group A (rock/sand/salt/ice/bare/water/infra)."""
     mask = np.zeros((height, width), dtype=bool)
     acum_dir = mascaras_root / "acumuladas"
-    year_dir = mascaras_root / "by_year"
-
-    for name in ACCUMULATED_STRICT_MASKS:
+    for name in ACCUMULATED_LULC_A:
         path = acum_dir / name
         if not path.is_file():
-            logger.warning("Missing accumulated mask: %s", path)
-            continue
-        mask |= align_band_to_ref(
-            path,
-            ref_height=height,
-            ref_width=width,
-            ref_transform=transform,
-            ref_crs=crs,
-        )
-
-    for stem in YEARLY_STRICT_STEMS:
-        path = year_dir / f"mascara_{stem}_{year}.tif"
-        if not path.is_file() and year_fallback:
-            path = year_dir / f"mascara_{stem}_{year_fallback}.tif"
-        if not path.is_file():
-            logger.warning("Missing yearly mask: mascara_%s_%s", stem, year)
+            logger.warning("Missing accumulated mask (paso A): %s", path)
             continue
         mask |= align_band_to_ref(
             path,
@@ -242,15 +238,18 @@ def accepted_reference_mask(
     width: int,
     transform,
     crs,
+    mode: str,
 ) -> tuple[np.ndarray, int]:
-    """Rasterize full UNIDOS polygons that touch ≥1 prefilter burn pixel."""
+    """Rasterize full UNIDOS polygons according to --mode vs prefilter."""
+    exclude = mode == "missing-from-prefilter"
     shapes = select_reference_shapes(
         year_gdf,
         burn_mask=prefilter_burn,
         out_shape=(height, width),
         transform=transform,
         crs=crs,
-        require_overlap=True,
+        require_overlap=(mode == "touch-prefilter"),
+        exclude_overlap=exclude,
     )
     if not shapes:
         return np.zeros((height, width), dtype=bool), 0
@@ -276,6 +275,7 @@ def run_recovery(
     year: int,
     args: argparse.Namespace,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
+    del year  # kept for call-site symmetry / future yearly masks
     ref_accepted, n_polys = accepted_reference_mask(
         year_gdf,
         prefilter_burn=prefilter_burn,
@@ -283,30 +283,34 @@ def run_recovery(
         width=width,
         transform=transform,
         crs=crs,
+        mode=args.mode,
     )
 
+    # 1) Add first (no LULC yet)
+    union = final_burn | (ref_accepted & ~final_burn)
+    pixels_added_pre_lulc = int((union & ~final_burn).sum())
+
+    # 2) LULC paso A on the full union
     blocked = np.zeros((height, width), dtype=bool)
     if not args.no_lulc:
-        blocked = build_strict_lulc_mask(
+        blocked = build_lulc_acc_a_mask(
             args.mascaras_root,
-            year,
             height=height,
             width=width,
             transform=transform,
             crs=crs,
-            year_fallback=args.lulc_year_fallback,
         )
-
-    raw_added = ref_accepted & ~final_burn & ~blocked
-    expanded = final_burn | raw_added
+    expanded = union & ~blocked
     added = expanded & ~final_burn
 
     stats = {
+        "mode": args.mode,
         "polygons_accepted": n_polys,
         "pixels_final_before": int(final_burn.sum()),
         "pixels_prefilter": int(prefilter_burn.sum()),
         "pixels_reference_accepted": int(ref_accepted.sum()),
-        "pixels_blocked_lulc": int((ref_accepted & ~final_burn & blocked).sum()),
+        "pixels_added_pre_lulc": pixels_added_pre_lulc,
+        "pixels_removed_lulc_a": int((union & blocked).sum()),
         "pixels_added": int(added.sum()),
         "pixels_final_after": int(expanded.sum()),
     }
@@ -570,9 +574,10 @@ def main() -> int:
     logger.info("mascaras       : %s", args.mascaras_root)
     logger.info("output-dir     : %s", args.output_dir)
     logger.info(
-        "years %d-%d | complete UNIDOS fill if prefilter hit | lulc_strict=%s",
+        "years %d-%d | mode=%s | LULC paso A after add=%s",
         args.from_year,
         args.to_year,
+        args.mode,
         not args.no_lulc,
     )
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 #---------------Script SBATCH - NLHPC ----------------
 # Recover pre-filter burn ∩ buffered MODIS into classification_20260729
-# national yearly mosaics (v9, burn = band 1).
+# national yearly mosaics (v9, burn = band 1). LULC A1+A2 applied AFTER add.
 #
 #   cd ~/fire && git pull
 #   mkdir -p ~/logs

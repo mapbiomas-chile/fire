@@ -200,7 +200,18 @@ def select_reference_shapes(
     transform,
     crs,
     require_overlap: bool,
+    exclude_overlap: bool = False,
 ) -> list[tuple]:
+    """Select reference polygons relative to an existing burn mask.
+
+    - require_overlap=False, exclude_overlap=False: all clipped polygons
+    - require_overlap=True: only polygons that touch ≥1 burn pixel
+    - exclude_overlap=True: only polygons that touch **no** burn pixel
+      (omissions relative to the burn mask / preliminary classification)
+    """
+    if require_overlap and exclude_overlap:
+        raise ValueError("require_overlap and exclude_overlap are mutually exclusive")
+
     clipped = clip_to_raster_bounds(
         gdf,
         height=out_shape[0],
@@ -216,10 +227,10 @@ def select_reference_shapes(
     if not geoms:
         return []
 
-    if not require_overlap:
+    if not require_overlap and not exclude_overlap:
         return [(geom, 1) for geom in geoms]
 
-    # One labeled rasterize, then polygon ids that touch burn pixels (fast vs per-polygon rasterize).
+    # One labeled rasterize, then keep / drop ids by burn touch.
     shapes_id = [(geom, idx + 1) for idx, geom in enumerate(geoms)]
     labels = rasterize(
         shapes_id,
@@ -228,6 +239,19 @@ def select_reference_shapes(
         fill=0,
         dtype=np.uint32,
     )
+
+    if exclude_overlap:
+        if not burn_mask.any():
+            return [(geom, 1) for geom in geoms]
+        hit_ids = np.unique(labels[burn_mask])
+        hit_ids = set(int(i) for i in hit_ids if i > 0)
+        return [
+            (geoms[i], 1)
+            for i in range(len(geoms))
+            if (i + 1) not in hit_ids
+        ]
+
+    # require_overlap
     if not burn_mask.any():
         return []
 

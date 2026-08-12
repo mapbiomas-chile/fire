@@ -1,31 +1,28 @@
 #!/bin/bash
 #---------------Script SBATCH - NLHPC ----------------
-# UNIDOS_13_18 polygons missing from preliminary (prefilter) → final
-# (2013–2018), then LULC group A on the union.
+# Prefilter ∩ buffered MODIS → classification_20260806 (2019–2025).
+# Add rules unchanged; LULC A1+A2 applied AFTER add.
+#
+# Final / campaign folder:
+#   ~/classification_20260806/burned_area_chile_temp_10_remap_{year}.tif
+# Output:
+#   ~/classification_20260806/prefilter_modis/
 #
 #   cd ~/fire && git pull
 #   mkdir -p ~/logs
-#   sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
+#   sbatch auxiliares/run_fill_prefilter_modis_20260806_slurm.sh
 #
-# Prueba 1 tile:
-#   EXPAND_REGIONS=r1 EXPAND_FROM_YEAR=2017 EXPAND_TO_YEAR=2017 \
-#     sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
+# Prueba 1 año:
+#   EXPAND_FROM_YEAR=2020 EXPAND_TO_YEAR=2020 \
+#     sbatch auxiliares/run_fill_prefilter_modis_20260806_slurm.sh
 #
-# Nacional v9 (classification_20260729):
-#   LAYOUT=national FINAL_CLASS_DIR=~/classification_20260729 \
-#     PREFILTER_REF_OUTPUT_DIR=~/classification_20260729_prefilter_reference \
-#     sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
-#
-# Legacy gate (UNIDOS that touch prefilter):
-#   FILL_MODE=touch-prefilter sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
-#
-#SBATCH -J fire_prefilter_ref
+#SBATCH -J fire_fill_modis_0806
 #SBATCH -p main
 #SBATCH -n 1
 #SBATCH -c 8
-#SBATCH --mem=64GB
+#SBATCH --mem=128GB
 #SBATCH --mail-type=ALL
-#SBATCH -t 02:00:00
+#SBATCH -t 08:00:00
 #SBATCH -o /home/%u/logs/%x_%j.out
 #SBATCH -e /home/%u/logs/%x_%j.err
 
@@ -34,36 +31,39 @@ set -euo pipefail
 FIRE_REPO="${REPO_ROOT:-${HOME}/fire}"
 AUX_DIR="${FIRE_REPO}/auxiliares"
 PATHS_FILE="${AUXILIARES_PATHS_FILE:-${AUX_DIR}/cluster_paths.env}"
-SCRIPT="${AUX_DIR}/fill_from_prefilter_reference.py"
+SCRIPT="${AUX_DIR}/fill_from_prefilter_modis.py"
 
-LAYOUT="${LAYOUT:-regional}"
-FILL_MODE="${FILL_MODE:-missing-from-prefilter}"
-FINAL_DIR="${FINAL_CLASS_DIR:-${HOME}/classification_20260713}"
+CAMPAIGN_DIR="${FINAL_CLASS_DIR:-${HOME}/classification_20260806}"
+FINAL_DIR="${CAMPAIGN_DIR}"
 PREFILTER_DIR="${PREFILTER_CLASS_DIR:-${HOME}/classification_20260619}"
-REFERENCE_SHP="${REFERENCE_SCARS_SHP:-${HOME}/validation/UNIDOS_13_18.shp}"
-OUTPUT_DIR="${PREFILTER_REF_OUTPUT_DIR:-${HOME}/classification_20260713_prefilter_reference}"
+MODIS_DIR="${MODIS_DIR:-${HOME}/MODIS}"
+OUTPUT_DIR="${PREFILTER_MODIS_OUTPUT_DIR:-${CAMPAIGN_DIR}/prefilter_modis}"
 MASCARAS_ROOT="${MASCARAS_ROOT:-${HOME}/classification_20260619/filtering_work/mascaras}"
 REGIONS="${EXPAND_REGIONS:-r1 r2 r4 r6}"
-FROM_YEAR="${EXPAND_FROM_YEAR:-2013}"
-TO_YEAR="${EXPAND_TO_YEAR:-2018}"
+FROM_YEAR="${EXPAND_FROM_YEAR:-2019}"
+TO_YEAR="${EXPAND_TO_YEAR:-2025}"
 FINAL_BAND="${FINAL_BAND:-1}"
+FINAL_PATTERN="${FINAL_PATTERN:-burned_area_chile_temp_10_remap_{year}.tif}"
+MODIS_BUFFER_PX="${MODIS_BUFFER_PX:-3}"
+MIN_ADDED_PIXELS="${MIN_ADDED_PIXELS:-222}"
+CLOSING_SIZE="${CLOSING_SIZE:-3}"
 SKIP_EXISTING="${EXPAND_SKIP_EXISTING:-0}"
 NO_LULC="${NO_LULC:-0}"
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 
 echo "============================================="
-echo "UNIDOS missing-from-prefilter + LULC A — NLHPC"
+echo "PREFILTER ∩ MODIS fill — classification_20260806"
 echo "============================================="
 echo "Repo:       ${FIRE_REPO}"
-echo "Layout:     ${LAYOUT}"
-echo "Mode:       ${FILL_MODE}"
 echo "Final:      ${FINAL_DIR} (band ${FINAL_BAND})"
+echo "Pattern:    ${FINAL_PATTERN}"
 echo "Prefilter:  ${PREFILTER_DIR}"
-echo "Reference:  ${REFERENCE_SHP}"
+echo "MODIS:      ${MODIS_DIR}"
 echo "Masks:      ${MASCARAS_ROOT}"
 echo "Output:     ${OUTPUT_DIR}"
-echo "Regions:    ${REGIONS} | ${FROM_YEAR}-${TO_YEAR}"
+echo "Years:      ${FROM_YEAR}-${TO_YEAR} | LULC A1+A2 after add"
+echo "MODIS buf:  ${MODIS_BUFFER_PX} px | closing=${CLOSING_SIZE} | min_added=${MIN_ADDED_PIXELS}"
 echo "Job id:     ${SLURM_JOB_ID:-local}"
 echo "============================================="
 
@@ -76,33 +76,32 @@ fi
 
 PYTHON="${PYTHON:-${HOME}/.conda/envs/mb_fuego/bin/python}"
 
-for d in "${FINAL_DIR}" "${PREFILTER_DIR}" "${MASCARAS_ROOT}"; do
+for d in "${FINAL_DIR}" "${PREFILTER_DIR}" "${MODIS_DIR}" "${MASCARAS_ROOT}"; do
   if [[ ! -d "${d}" ]]; then
     echo "ERROR: missing dir: ${d}" >&2
     exit 1
   fi
 done
-if [[ ! -f "${REFERENCE_SHP}" ]]; then
-  echo "ERROR: missing reference shapefile: ${REFERENCE_SHP}" >&2
-  exit 1
-fi
 
-"${PYTHON}" -c "import numpy, pandas, rasterio, geopandas; print('deps OK')"
+"${PYTHON}" -c "import numpy, pandas, rasterio, scipy; print('deps OK')"
 
 cmd=(
   "${PYTHON}" "${SCRIPT}"
-  --layout "${LAYOUT}"
-  --mode "${FILL_MODE}"
+  --layout national
   --final-dir "${FINAL_DIR}"
   --final-band "${FINAL_BAND}"
+  --final-pattern "${FINAL_PATTERN}"
   --prefilter-dir "${PREFILTER_DIR}"
-  --reference-shp "${REFERENCE_SHP}"
+  --modis-dir "${MODIS_DIR}"
   --output-dir "${OUTPUT_DIR}"
   --mascaras-root "${MASCARAS_ROOT}"
   --regions ${REGIONS}
   --from-year "${FROM_YEAR}"
   --to-year "${TO_YEAR}"
-  --stats-csv "${OUTPUT_DIR}/prefilter_reference_stats.csv"
+  --modis-buffer-px "${MODIS_BUFFER_PX}"
+  --closing-size "${CLOSING_SIZE}"
+  --min-added-pixels "${MIN_ADDED_PIXELS}"
+  --stats-csv "${OUTPUT_DIR}/prefilter_modis_stats.csv"
 )
 
 if [[ "${SKIP_EXISTING}" == "1" ]]; then
@@ -115,5 +114,5 @@ fi
 cd "${FIRE_REPO}"
 echo "Running: ${cmd[*]}"
 "${cmd[@]}"
-echo "Done. Stats: ${OUTPUT_DIR}/prefilter_reference_stats.csv"
+echo "Done. Stats: ${OUTPUT_DIR}/prefilter_modis_stats.csv"
 exit $?

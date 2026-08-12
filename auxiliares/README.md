@@ -212,18 +212,42 @@ Rutas default leftraru: `~/MODIS/modis_burned_area_chile_<year>.tif`, máscaras 
 
 ## Prefilter ∩ MODIS buffer — recuperar píxeles del modelo crudo
 
-Suma al producto final solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m). Luego: **relleno de huecos** → **closing suave (conexión)** → **sieve ≥222 px solo en lo agregado**.
+Suma al producto final solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m). Luego: **relleno de huecos** → **closing suave (conexión)** → **sieve ≥222 px solo en lo agregado** → **LULC A1 + A2** sobre la unión.
 
 ```text
-raw = prefilter ∩ MODIS_buffered ∩ ~final ∩ ~LULC_estricto
+raw = prefilter ∩ MODIS_buffered ∩ ~final
 refine = fill_holes(final ∪ raw) + closing 3×3
 added = sieve(refine \ final, min=222)
-out = final ∪ added
+union = final ∪ added
+out = union ∩ ~(A1 ∪ A2)
 ```
 
-### Nacional v9 (`classification_20260729`)
+- **A1:** máscaras acumuladas (29, 23, 61, 34, 25, 33, 24)
+- **A2:** `mascara_agricultura_<Y>` + `mascara_pastura_<Y>` (ventana de estabilidad)
+- Si existe `mascara_total_<Y>.tif`, se usa directamente (ya es A1∪A2)
 
-Final: `burned_area_chile_b14_filtered_v9_{year}.tif` (multibanda; quemado = banda 1). Prefilter regional se OR-mergea sobre la grilla nacional. Solo 2019–2025 (años con MODIS).
+### Nacional `classification_20260806` (temp_10_remap)
+
+Final: `burned_area_chile_temp_10_remap_{year}.tif` en `~/classification_20260806/`.
+
+```bash
+cd ~/fire && git pull
+mkdir -p ~/logs
+
+# 2013–2018 UNIDOS (LULC A1)
+sbatch auxiliares/run_fill_prefilter_reference_20260806_slurm.sh
+
+# 2019–2025 MODIS (LULC A1+A2)
+sbatch auxiliares/run_fill_prefilter_modis_20260806_slurm.sh
+```
+
+Salidas (subcarpetas de la misma campaña):
+- `~/classification_20260806/prefilter_reference/`
+- `~/classification_20260806/prefilter_modis/`
+
+### Nacional v9 (`classification_20260729`, referencia)
+
+Final: `burned_area_chile_b14_filtered_v9_{year}.tif`.
 
 ```bash
 cd ~/fire && git pull
@@ -254,21 +278,20 @@ Salida: `~/classification_20260713_prefilter_modis/`
 | `--fill-holes` | on |
 | `--closing-size` | 3 (0 = sin conexión) |
 | `--min-added-pixels` | 222 (~20 ha) |
-| LULC estricto | on (ag/pastura permitidos) |
+| LULC A1+A2 | después de agregar (acumuladas + agri/pastura del año) |
 | prefilter pattern | `b14_chile_{region}_{year}_cog_classified.tif` |
 
-## Prefilter ∩ UNIDOS — relleno completo 2013–2018
+## UNIDOS ausentes del prefilter — relleno 2013–2018
 
-Mismo espíritu que MODIS (2019–2025), pero la evidencia externa es `UNIDOS_13_18.shp`.
-Si un polígono de referencia toca **≥1 píxel** del prefilter `classification_20260619`, se agrega el **polígono completo** al producto final (misma resolución; sin buffer).
+Completa incendios presentes en `UNIDOS_13_18.shp` pero **ausentes** de la clasificación preliminar (`classification_20260619`). Se rasteriza el **polígono completo** (sin buffer). Luego se aplica **LULC grupo A** sobre la unión.
 
 ```text
-accepted = UNIDOS polygons that intersect prefilter
-added = accepted ∩ ~final ∩ ~LULC_estricto
-out = final ∪ added
+accepted = UNIDOS polygons with zero overlap vs prefilter
+union = final ∪ (accepted ∩ ~final)
+out = union ∩ ~LULC_accA
 ```
 
-Default: final `classification_20260713` (tiles regionales v6).
+Default: final `classification_20260713` (tiles regionales v6). Modo legacy (gate por toque de prefilter): `--mode touch-prefilter` / `FILL_MODE=touch-prefilter`.
 
 ```bash
 cd ~/fire && git pull
@@ -284,7 +307,7 @@ sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
 
 Salida: `~/classification_20260713_prefilter_reference/`
 
-Para aplicar sobre mosaicos nacionales v9:
+Para aplicar sobre mosaicos nacionales v9 (legacy):
 
 ```bash
 LAYOUT=national \
@@ -292,6 +315,9 @@ FINAL_CLASS_DIR=~/classification_20260729 \
 PREFILTER_REF_OUTPUT_DIR=~/classification_20260729_prefilter_reference \
   sbatch auxiliares/run_fill_prefilter_reference_slurm.sh
 ```
+
+Campaña actual (`classification_20260806`): usar
+`run_fill_prefilter_reference_20260806_slurm.sh` (ver sección MODIS arriba).
 
 ## Temporada → año calendario (`classification_20260730`)
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Recover pre-filter burn pixels confirmed by buffered MODIS.
+Recover pre-filter burn pixels confirmed by buffered MODIS (2019–2025).
 
 Layouts:
   regional — final tiles b14_chile_{region}_{year}_classified_filtered_v6.tif
@@ -9,17 +9,16 @@ Layouts:
              (classification_20260729); burn class in band 1; prefilter
              regions are OR-merged onto the national grid
 
-Candidates: classification_20260619 pre-filter (*_cog_classified.tif)
-            AND MODIS burned (optionally dilated to soften blocky edges)
-            AND NOT already in the base product.
+Add rules (unchanged):
+    candidates = prefilter ∩ MODIS_buffered ∩ ~final
+    refine = fill_holes(final ∪ candidates) + closing
+    sieved = sieve(added components < min_added_pixels)
+    union = final ∪ sieved_added
 
-Post-steps on the recovered layer:
-  1. Fill enclosed holes inward (binary_fill_holes on final ∪ candidates)
-  2. Optional light morphological closing to reconnect near pixels
-  3. Sieve added components < min_added_pixels (default 222 ≈ 20 ha)
-
-Optional: block strict LULC (water/urban/bare/rock/salt/ice), keep ag/pasture.
-Trusted final scars are never removed by the sieve.
+Then full LULC A1 + A2 on the union:
+    A1 = accumulated non-burnable (29,23,61,34,25,33,24)
+    A2 = yearly agricultura (15) + pastura (18) with stability window
+    out = union ∩ ~(A1 ∪ A2)
 """
 
 from __future__ import annotations
@@ -65,7 +64,7 @@ DEFAULT_CLOSING_SIZE = 3
 NATIONAL_FINAL_PATTERN = "burned_area_chile_b14_filtered_v9_{year}.tif"
 REGIONAL_FINAL_PATTERN = "b14_chile_{region}_{year}_classified_filtered_v6.tif"
 
-ACCUMULATED_STRICT_MASKS = (
+ACCUMULATED_LULC_A1 = (
     "mascara_alfloramiento_rocoso_acumulado.tif",
     "mascara_arena_playa_duna_acumulado.tif",
     "mascara_salar_acumulado.tif",
@@ -74,7 +73,11 @@ ACCUMULATED_STRICT_MASKS = (
     "mascara_rio_lago_acumulado.tif",
     "mascara_infraestructura_acumulado.tif",
 )
-YEARLY_STRICT_STEMS = ("rio_lago", "infraestructura")
+# Paso A2 — yearly land-use (stability window already baked into these files)
+YEARLY_LULC_A2 = (
+    "mascara_agricultura_{year}.tif",
+    "mascara_pastura_{year}.tif",
+)
 CONNECTIVITY_STRUCTURE = np.ones((3, 3), dtype=np.uint8)
 
 
@@ -166,11 +169,23 @@ def parse_args() -> argparse.Namespace:
             f"(default: {DEFAULT_MIN_ADDED_PIXELS} ~ 20 ha at 30 m)."
         ),
     )
-    p.add_argument("--lulc-year-fallback", type=int, default=2024)
+    p.add_argument(
+        "--lulc-year-fallback",
+        type=int,
+        default=2024,
+        help=(
+            "If mascara_agricultura/pastura_<year> is missing, try this year "
+            "(default: 2024; useful for 2025)."
+        ),
+    )
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--stats-csv", type=Path, default=None)
-    p.add_argument("--no-lulc", action="store_true")
+    p.add_argument(
+        "--no-lulc",
+        action="store_true",
+        help="Skip LULC A1+A2 post-filter after adding pixels",
+    )
     return p.parse_args()
 
 
@@ -214,7 +229,7 @@ def buffer_mask(mask: np.ndarray, buffer_px: int) -> np.ndarray:
     )
 
 
-def build_strict_lulc_mask(
+def build_lulc_a1_a2_mask(
     mascaras_root: Path,
     year: int,
     *,
@@ -222,16 +237,36 @@ def build_strict_lulc_mask(
     width: int,
     transform,
     crs,
-    year_fallback: int,
+    year_fallback: int | None = 2024,
 ) -> np.ndarray:
-    mask = np.zeros((height, width), dtype=bool)
-    acum_dir = mascaras_root / "acumuladas"
-    year_dir = mascaras_root / "by_year"
+    """LULC A1 (accumulated) ∪ A2 (yearly agri/pasture) for filter year.
 
-    for name in ACCUMULATED_STRICT_MASKS:
+    Prefer ``mascara_total_<year>.tif`` when present (already A1∪A2).
+    """
+    mask = np.zeros((height, width), dtype=bool)
+    year_dir = mascaras_root / "by_year"
+    acum_dir = mascaras_root / "acumuladas"
+
+    total_candidates = (
+        year_dir / f"mascara_total_{year}.tif",
+        mascaras_root / f"mascara_total_{year}.tif",
+    )
+    for total_path in total_candidates:
+        if total_path.is_file():
+            logger.info("LULC A1+A2 via total mask: %s", total_path.name)
+            return align_band_to_ref(
+                total_path,
+                ref_height=height,
+                ref_width=width,
+                ref_transform=transform,
+                ref_crs=crs,
+            )
+
+    # A1 — accumulated
+    for name in ACCUMULATED_LULC_A1:
         path = acum_dir / name
         if not path.is_file():
-            logger.warning("Missing accumulated mask: %s", path)
+            logger.warning("Missing accumulated mask (A1): %s", path)
             continue
         mask |= align_band_to_ref(
             path,
@@ -241,12 +276,20 @@ def build_strict_lulc_mask(
             ref_crs=crs,
         )
 
-    for stem in YEARLY_STRICT_STEMS:
-        path = year_dir / f"mascara_{stem}_{year}.tif"
-        if not path.is_file() and year_fallback:
-            path = year_dir / f"mascara_{stem}_{year_fallback}.tif"
+    # A2 — yearly agri / pasture
+    for pattern in YEARLY_LULC_A2:
+        path = year_dir / pattern.format(year=year)
+        if not path.is_file() and year_fallback is not None:
+            fb = year_dir / pattern.format(year=year_fallback)
+            if fb.is_file():
+                logger.warning(
+                    "Missing %s — using fallback year %s",
+                    path.name,
+                    year_fallback,
+                )
+                path = fb
         if not path.is_file():
-            logger.warning("Missing yearly mask: mascara_%s_%s", stem, year)
+            logger.warning("Missing yearly mask (A2): %s", path)
             continue
         mask |= align_band_to_ref(
             path,
@@ -410,9 +453,28 @@ def run_recovery(
     )
     modis = buffer_mask(modis_raw, args.modis_buffer_px)
 
+    # 1) Add rules unchanged — no LULC yet (blocked empty during refine)
+    blocked_none = np.zeros((height, width), dtype=bool)
+    raw_added = prefilter_burn & modis & ~final_burn
+    refined, refine_stats = refine_union(
+        final_burn,
+        raw_added,
+        blocked_none,
+        fill_holes=args.fill_holes,
+        closing_size=args.closing_size,
+        closing_iterations=args.closing_iterations,
+    )
+    union, sieve_stats = sieve_added_only(
+        final_burn,
+        refined,
+        min_added_pixels=args.min_added_pixels,
+    )
+    pixels_added_pre_lulc = int((union & ~final_burn).sum())
+
+    # 2) LULC A1 + A2 on the full union
     blocked = np.zeros((height, width), dtype=bool)
     if not args.no_lulc:
-        blocked = build_strict_lulc_mask(
+        blocked = build_lulc_a1_a2_mask(
             args.mascaras_root,
             year,
             height=height,
@@ -421,21 +483,7 @@ def run_recovery(
             crs=crs,
             year_fallback=args.lulc_year_fallback,
         )
-
-    raw_added = prefilter_burn & modis & ~final_burn & ~blocked
-    refined, refine_stats = refine_union(
-        final_burn,
-        raw_added,
-        blocked,
-        fill_holes=args.fill_holes,
-        closing_size=args.closing_size,
-        closing_iterations=args.closing_iterations,
-    )
-    expanded, sieve_stats = sieve_added_only(
-        final_burn,
-        refined,
-        min_added_pixels=args.min_added_pixels,
-    )
+    expanded = union & ~blocked
     added = expanded & ~final_burn
 
     stats = {
@@ -443,15 +491,14 @@ def run_recovery(
         "pixels_prefilter": int(prefilter_burn.sum()),
         "pixels_modis_raw": int(modis_raw.sum()),
         "pixels_modis_buffered": int(modis.sum()),
-        "pixels_blocked_lulc": int(
-            (prefilter_burn & modis & ~final_burn & blocked).sum()
-        ),
         "pixels_raw_added": int(raw_added.sum()),
         "pixels_filled_holes": refine_stats["pixels_filled_holes"],
         "pixels_from_closing": refine_stats["pixels_from_closing"],
         "pixels_removed_sieve": sieve_stats["pixels_removed_sieve"],
         "sieve_components_before": sieve_stats["components_before"],
         "sieve_components_after": sieve_stats["components_after"],
+        "pixels_added_pre_lulc": pixels_added_pre_lulc,
+        "pixels_removed_lulc_a1_a2": int((union & blocked).sum()),
         "pixels_added": int(added.sum()),
         "pixels_final_after": int(expanded.sum()),
     }
@@ -723,7 +770,7 @@ def main() -> int:
     logger.info("output-dir    : %s", args.output_dir)
     logger.info(
         "years %d-%d | modis_buffer_px=%d | fill_holes=%s | closing=%d | "
-        "min_added_px=%d | lulc_strict=%s",
+        "min_added_px=%d | LULC A1+A2 after add=%s",
         args.from_year,
         args.to_year,
         args.modis_buffer_px,
