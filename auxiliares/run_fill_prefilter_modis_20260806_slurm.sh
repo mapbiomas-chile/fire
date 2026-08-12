@@ -43,7 +43,10 @@ REGIONS="${EXPAND_REGIONS:-r1 r2 r4 r6}"
 FROM_YEAR="${EXPAND_FROM_YEAR:-2019}"
 TO_YEAR="${EXPAND_TO_YEAR:-2025}"
 FINAL_BAND="${FINAL_BAND:-1}"
-FINAL_PATTERN="${FINAL_PATTERN:-burned_area_chile_temp_10_remap_{year}.tif}"
+# Do not put {year} inside ${VAR:-...}: bash closes the expansion at the first '}'.
+if [[ -z "${FINAL_PATTERN:-}" ]]; then
+  FINAL_PATTERN='burned_area_chile_temp_10_remap_{year}.tif'
+fi
 MODIS_BUFFER_PX="${MODIS_BUFFER_PX:-3}"
 MIN_ADDED_PIXELS="${MIN_ADDED_PIXELS:-222}"
 CLOSING_SIZE="${CLOSING_SIZE:-3}"
