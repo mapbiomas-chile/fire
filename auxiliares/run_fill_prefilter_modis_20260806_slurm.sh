@@ -1,7 +1,7 @@
 #!/bin/bash
 #---------------Script SBATCH - NLHPC ----------------
 # Prefilter ∩ buffered MODIS → classification_20260806 (2019–2025).
-# Add rules unchanged; LULC A1+A2 applied AFTER add.
+# Add → fill/closing → LULC A1+A2 → full-mask sieve ≥500 px.
 #
 # Final / campaign folder:
 #   ~/classification_20260806/burned_area_chile_temp_10_remap_{year}.tif
@@ -48,7 +48,7 @@ if [[ -z "${FINAL_PATTERN:-}" ]]; then
   FINAL_PATTERN='burned_area_chile_temp_10_remap_{year}.tif'
 fi
 MODIS_BUFFER_PX="${MODIS_BUFFER_PX:-3}"
-MIN_ADDED_PIXELS="${MIN_ADDED_PIXELS:-222}"
+MIN_ADDED_PIXELS="${MIN_ADDED_PIXELS:-500}"
 CLOSING_SIZE="${CLOSING_SIZE:-3}"
 SKIP_EXISTING="${EXPAND_SKIP_EXISTING:-0}"
 NO_LULC="${NO_LULC:-0}"
@@ -65,8 +65,8 @@ echo "Prefilter:  ${PREFILTER_DIR}"
 echo "MODIS:      ${MODIS_DIR}"
 echo "Masks:      ${MASCARAS_ROOT}"
 echo "Output:     ${OUTPUT_DIR}"
-echo "Years:      ${FROM_YEAR}-${TO_YEAR} | LULC A1+A2 after add"
-echo "MODIS buf:  ${MODIS_BUFFER_PX} px | closing=${CLOSING_SIZE} | min_added=${MIN_ADDED_PIXELS}"
+echo "Years:      ${FROM_YEAR}-${TO_YEAR} | LULC A1+A2 then full sieve"
+echo "MODIS buf:  ${MODIS_BUFFER_PX} px | closing=${CLOSING_SIZE} | min_px=${MIN_ADDED_PIXELS}"
 echo "Job id:     ${SLURM_JOB_ID:-local}"
 echo "============================================="
 
