@@ -12,6 +12,7 @@
 #   mkdir -p ~/logs
 #   sbatch auxiliares/run_fill_prefilter_modis_20260806_slurm.sh
 #
+# Wipes ~/classification_20260806/prefilter_modis/ before writing.
 # Prueba 1 año:
 #   EXPAND_FROM_YEAR=2020 EXPAND_TO_YEAR=2020 \
 #     sbatch auxiliares/run_fill_prefilter_modis_20260806_slurm.sh
@@ -70,7 +71,17 @@ echo "MODIS buf:  ${MODIS_BUFFER_PX} px | closing=${CLOSING_SIZE} | min_px=${MIN
 echo "Job id:     ${SLURM_JOB_ID:-local}"
 echo "============================================="
 
-mkdir -p "${HOME}/logs" "${OUTPUT_DIR}"
+mkdir -p "${HOME}/logs"
+
+if [[ -z "${OUTPUT_DIR}" || "${OUTPUT_DIR}" == "${FINAL_DIR}" || "${OUTPUT_DIR}" == "${HOME}" ]]; then
+  echo "ERROR: refusing to clean output dir: ${OUTPUT_DIR}" >&2
+  exit 1
+fi
+if [[ -d "${OUTPUT_DIR}" ]]; then
+  echo "Cleaning previous output: ${OUTPUT_DIR}"
+  rm -rf "${OUTPUT_DIR}"
+fi
+mkdir -p "${OUTPUT_DIR}"
 
 if [[ -f "${PATHS_FILE}" ]]; then
   # shellcheck source=/dev/null
