@@ -86,7 +86,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Add pre-filter classified burn pixels that overlap buffered MODIS "
             "to the final filtered collection, then fill holes, optionally close "
-            "gaps, apply LULC A1+A2, and sieve the full post-LULC mask."
+            "gaps, then apply LULC A1+A2 and sieve only newly added pixels."
         )
     )
     p.add_argument("--final-dir", type=Path, default=DEFAULT_FINAL_DIR)
