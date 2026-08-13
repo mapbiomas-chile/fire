@@ -9,16 +9,16 @@ Layouts:
              (classification_20260729); burn class in band 1; prefilter
              regions are OR-merged onto the national grid
 
-Add rules:
+Add rules (existing final scars are never removed):
     candidates = prefilter ∩ MODIS_buffered ∩ ~final
     refine = fill_holes(final ∪ candidates) + closing
-    union = final ∪ refine
+    added_raw = refine ∩ ~final
 
-Then LULC A1 + A2, then surface sieve on the **full** post-LULC mask:
+Then LULC A1+A2 and surface sieve apply **only to added pixels**:
     A1 = accumulated non-burnable (29,23,61,34,25,33,24)
     A2 = yearly agricultura (15) + pastura (18) with stability window
-    masked = union ∩ ~(A1 ∪ A2)
-    out = sieve(masked, min_pixels=500)   # ~45 ha at 30 m
+    added = sieve(added_raw ∩ ~(A1 ∪ A2), min_pixels=500)  # ~45 ha at 30 m
+    out = final ∪ added
 """
 
 from __future__ import annotations
@@ -166,7 +166,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MIN_ADDED_PIXELS,
         help=(
             "Drop connected components smaller than this AFTER LULC, "
-            "on the full burn mask "
+            "only among newly added pixels (existing final scars untouched) "
             f"(default: {DEFAULT_MIN_ADDED_PIXELS} ~ 45 ha at 30 m)."
         ),
     )
@@ -453,7 +453,7 @@ def run_recovery(
     )
     modis = buffer_mask(modis_raw, args.modis_buffer_px)
 
-    # 1) Add rules — no LULC / sieve yet (blocked empty during refine)
+    # 1) Add candidates — existing final scars stay untouched
     blocked_none = np.zeros((height, width), dtype=bool)
     raw_added = prefilter_burn & modis & ~final_burn
     refined, refine_stats = refine_union(
@@ -464,10 +464,10 @@ def run_recovery(
         closing_size=args.closing_size,
         closing_iterations=args.closing_iterations,
     )
-    union = refined | final_burn
-    pixels_added_pre_lulc = int((union & ~final_burn).sum())
+    added_raw = refined & ~final_burn
+    pixels_added_pre_lulc = int(added_raw.sum())
 
-    # 2) LULC A1 + A2 on the full union
+    # 2) LULC A1+A2 only on newly added pixels
     blocked = np.zeros((height, width), dtype=bool)
     if not args.no_lulc:
         blocked = build_lulc_a1_a2_mask(
@@ -479,14 +479,14 @@ def run_recovery(
             crs=crs,
             year_fallback=args.lulc_year_fallback,
         )
-    masked = union & ~blocked
+    added_after_lulc = added_raw & ~blocked
 
-    # 3) Surface sieve on the full post-LULC mask (added + original remnants)
-    expanded, sieve_stats = sieve_full_mask(
-        masked,
+    # 3) Surface sieve only on the added layer
+    added, sieve_stats = sieve_full_mask(
+        added_after_lulc,
         min_pixels=args.min_added_pixels,
     )
-    added = expanded & ~final_burn
+    expanded = final_burn | added
 
     stats = {
         "pixels_final_before": int(final_burn.sum()),
@@ -497,11 +497,11 @@ def run_recovery(
         "pixels_filled_holes": refine_stats["pixels_filled_holes"],
         "pixels_from_closing": refine_stats["pixels_from_closing"],
         "pixels_added_pre_lulc": pixels_added_pre_lulc,
-        "pixels_removed_lulc_a1_a2": int((union & blocked).sum()),
+        "pixels_removed_lulc_a1_a2": int((added_raw & blocked).sum()),
         "pixels_removed_sieve": sieve_stats["pixels_removed_sieve"],
         "sieve_components_before": sieve_stats["components_before"],
         "sieve_components_after": sieve_stats["components_after"],
-        "pixels_removed_from_final": int((final_burn & ~expanded).sum()),
+        "pixels_removed_from_final": 0,
         "pixels_added": int(added.sum()),
         "pixels_final_after": int(expanded.sum()),
     }
@@ -773,7 +773,7 @@ def main() -> int:
     logger.info("output-dir    : %s", args.output_dir)
     logger.info(
         "years %d-%d | modis_buffer_px=%d | fill_holes=%s | closing=%d | "
-        "LULC A1+A2=%s then full sieve min_px=%d",
+        "LULC A1+A2=%s then sieve added-only min_px=%d",
         args.from_year,
         args.to_year,
         args.modis_buffer_px,

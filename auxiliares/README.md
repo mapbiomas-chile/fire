@@ -212,14 +212,14 @@ Rutas default leftraru: `~/MODIS/modis_burned_area_chile_<year>.tif`, máscaras 
 
 ## Prefilter ∩ MODIS buffer — recuperar píxeles del modelo crudo
 
-Suma al producto final solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m). Luego: **relleno de huecos** → **closing suave (conexión)** → **LULC A1 + A2** sobre la unión → **sieve ≥500 px de toda la máscara**.
+Suma al producto final solo píxeles de `classification_20260619/` (antes de filtros) que caen dentro de MODIS. MODIS se dilata un poco en la grilla de 30 m para suavizar el borde cuadrado (~500 m). Luego: **relleno de huecos** → **closing suave** → **LULC A1+A2 y sieve ≥500 px solo en lo agregado** (el producto base no se toca).
 
 ```text
 raw = prefilter ∩ MODIS_buffered ∩ ~final
 refine = fill_holes(final ∪ raw) + closing 3×3
-union = final ∪ refine
-masked = union ∩ ~(A1 ∪ A2)
-out = sieve(masked, min=500)
+added_raw = refine ∩ ~final
+added = sieve(added_raw ∩ ~(A1 ∪ A2), min=500)
+out = final ∪ added
 ```
 
 - **A1:** máscaras acumuladas (29, 23, 61, 34, 25, 33, 24)
@@ -277,8 +277,8 @@ Salida: `~/classification_20260713_prefilter_modis/`
 | `--modis-buffer-px` | 3 (~90 m a 30 m) |
 | `--fill-holes` | on |
 | `--closing-size` | 3 (0 = sin conexión) |
-| `--min-added-pixels` | 500 (~45 ha); sieve de toda la máscara **después** de LULC |
-| LULC A1+A2 | después de agregar, **antes** del sieve |
+| `--min-added-pixels` | 500 (~45 ha); sieve **solo de lo agregado** después de LULC |
+| LULC A1+A2 | solo sobre píxeles agregados (base intacta) |
 | prefilter pattern | `b14_chile_{region}_{year}_cog_classified.tif` |
 
 ## UNIDOS ausentes del prefilter — relleno 2013–2018

@@ -1,7 +1,7 @@
 #!/bin/bash
 #---------------Script SBATCH - NLHPC ----------------
 # Prefilter ∩ buffered MODIS → classification_20260806 (2019–2025).
-# Add → fill/closing → LULC A1+A2 → full-mask sieve ≥500 px.
+# Add → fill/closing → LULC A1+A2 + sieve ≥500 px solo en píxeles agregados.
 #
 # Final / campaign folder:
 #   ~/classification_20260806/burned_area_chile_temp_10_remap_{year}.tif
@@ -66,7 +66,7 @@ echo "Prefilter:  ${PREFILTER_DIR}"
 echo "MODIS:      ${MODIS_DIR}"
 echo "Masks:      ${MASCARAS_ROOT}"
 echo "Output:     ${OUTPUT_DIR}"
-echo "Years:      ${FROM_YEAR}-${TO_YEAR} | LULC A1+A2 then full sieve"
+echo "Years:      ${FROM_YEAR}-${TO_YEAR} | LULC+sieve solo en agregados"
 echo "MODIS buf:  ${MODIS_BUFFER_PX} px | closing=${CLOSING_SIZE} | min_px=${MIN_ADDED_PIXELS}"
 echo "Job id:     ${SLURM_JOB_ID:-local}"
 echo "============================================="
